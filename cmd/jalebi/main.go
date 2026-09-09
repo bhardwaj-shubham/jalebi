@@ -8,8 +8,8 @@ import (
 )
 
 func main() {
-	if err := cli.Greet("Jalebi"); err != nil {
-		fmt.Fprint(os.Stderr, err)
+	if err := cli.CmdArgs(os.Args[1:]); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
