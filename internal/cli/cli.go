@@ -3,7 +3,9 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -31,20 +33,68 @@ func CmdArgs(args []string) error {
 
 	fmt.Println("Project:", info.Name())
 
+	projectInfo, err := AnalyzeProject(path)
+
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Directories: %d\nFiles: %d\n", projectInfo.Directories, projectInfo.Files)
+
 	return nil
 }
 
 func flags(flag string) error {
 	switch flag {
 	case "--version", "-v":
-		fmt.Println("Jalebi: 0.1")
+		fmt.Println("Jalebi: 0.2.0")
 		return nil
 
 	case "--help", "-h":
-		fmt.Println("Jalebi is made for developer to understand project.\nJalebi CLI Version: 0.1")
+		fmt.Println("Jalebi is made for developer to understand project.\nJalebi CLI Version: 0.2.0")
 		return nil
 
 	default:
 		return fmt.Errorf("unknown flag: %s", flag)
 	}
+}
+
+type ProjectInfo struct {
+	Files       int
+	Directories int
+}
+
+func AnalyzeProject(root string) (ProjectInfo, error) {
+	files, directories := 0, 0
+
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if path == root {
+			return nil
+		}
+
+		if d.IsDir() && (d.Name() == "bin" || d.Name() == ".git" || d.Name() == "node_modules") {
+			return fs.SkipDir
+		}
+
+		if d.IsDir() {
+			directories++
+		} else {
+			files++
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return ProjectInfo{}, err
+	}
+
+	return ProjectInfo{
+		Files:       files,
+		Directories: directories,
+	}, nil
 }
