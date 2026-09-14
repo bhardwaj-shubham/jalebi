@@ -109,3 +109,49 @@ func TestCmdArgs_AnalyzeProject(t *testing.T) {
 		t.Errorf("expected directories=3 & files=2, got directories=%d & files=%d", projectInfo.Directories, projectInfo.Files)
 	}
 }
+
+func TestAnalyzeLanguages(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	targets := []string{
+		"sample.go",
+		"sample.py",
+		"sample.js",
+		"sample.ts",
+		"Dockerfile",
+		"Makefile",
+		".env",
+		".gitignore",
+		"sample.xyz",
+	}
+	expectedOutput := map[string]int{
+		"Go":         1,
+		"Python":     1,
+		"JavaScript": 1,
+		"TypeScript": 1,
+		"NO_EXT":     2,
+		"Others":     3,
+	}
+
+	for _, name := range targets {
+		filePath := filepath.Join(tmpDir, name)
+
+		err := os.WriteFile(filePath, []byte{}, 0644)
+		if err != nil {
+			t.Fatalf("failed to create file %s: %v", name, err)
+		}
+	}
+
+	filesCountByLanguage, err := AnalyzeLanguages(tmpDir)
+	if err != nil {
+		t.Errorf("failed to analyze languages: %v", err)
+	}
+
+	for language, expected := range expectedOutput {
+		actual := filesCountByLanguage[language]
+
+		if actual != expected {
+			t.Errorf("AnalyzeLanguages: for %s expected %d, get %d", language, expected, actual)
+		}
+	}
+}
