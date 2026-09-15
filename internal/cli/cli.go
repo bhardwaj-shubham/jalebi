@@ -1,15 +1,21 @@
 package cli
 
 import (
+	"bufio"
+	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
+	"time"
 )
 
-func CmdArgs(args []string) error {
+func CmdArgs(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		return errors.New("no project directory provided")
 	}
@@ -31,25 +37,58 @@ func CmdArgs(args []string) error {
 		return fmt.Errorf("path is not a directory: %q", path)
 	}
 
+	start := time.Now()
+
+	projectInfo, err := AnalyzeProject(ctx, path)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("DEBUG: AnalyzeProject: %v\n", time.Since(start))
+
+	start = time.Now()
+
+	filesCountByLanguage, err := AnalyzeLanguages(ctx, path)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("DEBUG: AnalyzeLanguages: %v\n", time.Since(start))
+
+	start = time.Now()
+
+	topLanguages := TopLanguages(filesCountByLanguage)
+
+	fmt.Printf("DEBUG: TopLanguages: %v\n", time.Since(start))
+
+	start = time.Now()
+
+	searchedTags, err := FindTagsInDirectory(ctx, path)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("DEBUG: FindTagsInDirectory: %v\n", time.Since(start))
+
 	fmt.Println("Project:", info.Name())
+	fmt.Printf("- Directories: %d\n- Files: %d\n", projectInfo.Directories, projectInfo.Files)
 
-	projectInfo, err := AnalyzeProject(path)
-	if err != nil {
-		return err
-	}
-
-	filesCountByLanguage, err := AnalyzeLanguages(path)
-	if err != nil {
-		return err
-	}
-
-	fmt.Printf("Directories: %d\nFiles: %d\n", projectInfo.Directories, projectInfo.Files)
-
-	fmt.Println("\n---Files Counts---")
-	for fileType, cnt := range filesCountByLanguage {
-		fmt.Printf("%s = %d\n", fileType, cnt)
+	fmt.Println("\nLanguages:")
+	for _, file := range topLanguages {
+		fmt.Printf("• %s = %d\n", file.Language, file.Count)
 	}
 	fmt.Println()
+
+	fmt.Println("Developer Notes:")
+	if len(searchedTags) == 0 {
+		fmt.Println("Nothing found in project!")
+	} else {
+		for _, foundTags := range searchedTags {
+			fmt.Printf("➜ File: %s\n", foundTags.path)
+			fmt.Printf("  ├─ Line/Col: %d:%d | Tag: [%s]\n", foundTags.lineNum, foundTags.colNum, foundTags.tag)
+			fmt.Printf("  └─ Context: %s\n\n", foundTags.context)
+		}
+	}
 
 	return nil
 }
@@ -57,11 +96,11 @@ func CmdArgs(args []string) error {
 func flags(flag string) error {
 	switch flag {
 	case "--version", "-v":
-		fmt.Println("Jalebi: 0.2.0")
+		fmt.Println("Jalebi: 0.3.0")
 		return nil
 
 	case "--help", "-h":
-		fmt.Println("Jalebi is made for developer to understand project.\nJalebi CLI Version: 0.2.0")
+		fmt.Println("Jalebi is made for developer to understand project.\nJalebi CLI Version: 0.3.0")
 		return nil
 
 	default:
@@ -76,12 +115,18 @@ type ProjectInfo struct {
 
 type FilesCountByLanguage map[string]int
 
-func AnalyzeProject(root string) (ProjectInfo, error) {
+func AnalyzeProject(ctx context.Context, root string) (ProjectInfo, error) {
 	files, directories := 0, 0
 
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
 		}
 
 		if path == root {
@@ -111,7 +156,7 @@ func AnalyzeProject(root string) (ProjectInfo, error) {
 	}, nil
 }
 
-func AnalyzeLanguages(root string) (FilesCountByLanguage, error) {
+func AnalyzeLanguages(ctx context.Context, root string) (FilesCountByLanguage, error) {
 	filesCountByLanguage := make(FilesCountByLanguage)
 
 	extToLanguage := map[string]string{
@@ -126,6 +171,12 @@ func AnalyzeLanguages(root string) (FilesCountByLanguage, error) {
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
 		}
 
 		if path == root {
@@ -160,4 +211,132 @@ func AnalyzeLanguages(root string) (FilesCountByLanguage, error) {
 	}
 
 	return filesCountByLanguage, nil
+}
+
+type LanguageCount struct {
+	Language string
+	Count    int
+}
+
+func TopLanguages(filesCountByLanguage FilesCountByLanguage) []LanguageCount {
+	topLanguages := make([]LanguageCount, 0)
+
+	for language, count := range filesCountByLanguage {
+		if language == "Others" || language == "NO_EXT" {
+			continue
+		}
+		topLanguages = append(topLanguages, LanguageCount{Language: language, Count: count})
+	}
+
+	slices.SortFunc(topLanguages, func(pair1 LanguageCount, pair2 LanguageCount) int {
+		if c := cmp.Compare(pair2.Count, pair1.Count); c != 0 {
+			return c
+		}
+		return cmp.Compare(pair1.Language, pair2.Language)
+	})
+
+	if len(topLanguages) > 3 {
+		topLanguages = topLanguages[:3]
+	}
+
+	return topLanguages
+}
+
+type SearchedTags struct {
+	path    string
+	lineNum int
+	colNum  int
+	tag     string
+	context string
+}
+
+func FindTagsInDirectory(ctx context.Context, rootPath string) ([]SearchedTags, error) {
+	searchedTags := make([]SearchedTags, 0)
+
+	re := regexp.MustCompile(`\b(TODO|FIXME|BUG|HACK|REFACTOR|NOTE)\b`)
+	allowedExtensions := map[string]struct{}{
+		"go": {},
+		"py": {},
+		"ts": {},
+		"js": {},
+		"md": {},
+	}
+	allowedFilenames := map[string]struct{}{
+		"Dockerfile": {},
+		"Makefile":   {},
+	}
+
+	err := filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		if d.IsDir() && (d.Name() == "bin" || d.Name() == ".git" || d.Name() == "node_modules") {
+			return fs.SkipDir
+		}
+
+		if !d.IsDir() {
+			ext := filepath.Ext(path)
+
+			if ext != "" {
+				ext = strings.ToLower(ext[1:])
+
+				if _, exists := allowedExtensions[ext]; !exists {
+					return nil
+				}
+			} else {
+				if _, exists := allowedFilenames[d.Name()]; !exists {
+					return nil
+				}
+			}
+
+			file, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer file.Close()
+
+			scanner := bufio.NewScanner(file)
+			buf := make([]byte, 64*1024)
+			scanner.Buffer(buf, 1024*1024)
+
+			lineNum := 0
+
+			for scanner.Scan() {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+				}
+
+				lineNum++
+				line := scanner.Text()
+
+				matches := re.FindAllStringIndex(line, -1)
+
+				for _, loc := range matches {
+					match := line[loc[0]:loc[1]]
+					colNum := loc[0] + 1
+
+					searchedTags = append(searchedTags, SearchedTags{path: path, lineNum: lineNum, colNum: colNum, tag: match, context: strings.TrimSpace(line)})
+				}
+
+			}
+			return scanner.Err()
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return searchedTags, nil
 }
