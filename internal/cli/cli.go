@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
 	"cmp"
 	"context"
 	"errors"
@@ -9,10 +10,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
-	"time"
 )
 
 func CmdArgs(ctx context.Context, args []string) error {
@@ -37,38 +36,22 @@ func CmdArgs(ctx context.Context, args []string) error {
 		return fmt.Errorf("path is not a directory: %q", path)
 	}
 
-	start := time.Now()
-
 	projectInfo, err := AnalyzeProject(ctx, path)
 	if err != nil {
 		return err
 	}
-
-	fmt.Printf("DEBUG: AnalyzeProject: %v\n", time.Since(start))
-
-	start = time.Now()
 
 	filesCountByLanguage, err := AnalyzeLanguages(ctx, path)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("DEBUG: AnalyzeLanguages: %v\n", time.Since(start))
-
-	start = time.Now()
-
 	topLanguages := TopLanguages(filesCountByLanguage)
-
-	fmt.Printf("DEBUG: TopLanguages: %v\n", time.Since(start))
-
-	start = time.Now()
 
 	searchedTags, err := FindTagsInDirectory(ctx, path)
 	if err != nil {
 		return err
 	}
-
-	fmt.Printf("DEBUG: FindTagsInDirectory: %v\n", time.Since(start))
 
 	fmt.Println("Project:", info.Name())
 	fmt.Printf("- Directories: %d\n- Files: %d\n", projectInfo.Directories, projectInfo.Files)
@@ -250,20 +233,25 @@ type SearchedTags struct {
 	context string
 }
 
+func isWordChar(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
+}
+
 func FindTagsInDirectory(ctx context.Context, rootPath string) ([]SearchedTags, error) {
 	searchedTags := make([]SearchedTags, 0)
 
-	re := regexp.MustCompile(`\b(TODO|FIXME|BUG|HACK|REFACTOR|NOTE)\b`)
+	// Pre-define keywords as byte slices
+	keywords := []string{"TODO", "FIXME", "BUG", "HACK", "REFACTOR", "NOTE"}
+	kwBytes := make([][]byte, len(keywords))
+	for i, kw := range keywords {
+		kwBytes[i] = []byte(kw)
+	}
+
 	allowedExtensions := map[string]struct{}{
-		"go": {},
-		"py": {},
-		"ts": {},
-		"js": {},
-		"md": {},
+		"go": {}, "py": {}, "ts": {}, "js": {}, "md": {},
 	}
 	allowedFilenames := map[string]struct{}{
-		"Dockerfile": {},
-		"Makefile":   {},
+		"Dockerfile": {}, "Makefile": {},
 	}
 
 	err := filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
@@ -316,17 +304,51 @@ func FindTagsInDirectory(ctx context.Context, rootPath string) ([]SearchedTags, 
 				}
 
 				lineNum++
-				line := scanner.Text()
+				rawLine := scanner.Bytes() // Reuses Scanner's internal buffer
 
-				matches := re.FindAllStringIndex(line, -1)
+				var contextStr string // Lazily generated only if a match is found
+				hasMatchOnLine := false
 
-				for _, loc := range matches {
-					match := line[loc[0]:loc[1]]
-					colNum := loc[0] + 1
+				// Check each keyword on the line
+				for i, kwb := range kwBytes {
+					kw := keywords[i]
+					currIdx := 0
 
-					searchedTags = append(searchedTags, SearchedTags{path: path, lineNum: lineNum, colNum: colNum, tag: match, context: strings.TrimSpace(line)})
+					for {
+						idx := bytes.Index(rawLine[currIdx:], kwb)
+						if idx == -1 {
+							break
+						}
+
+						absoluteIdx := currIdx + idx
+
+						// Emulate \b (word boundary) check
+						leftValid := absoluteIdx == 0 || !isWordChar(rawLine[absoluteIdx-1])
+						rightIdx := absoluteIdx + len(kwb)
+						rightValid := rightIdx == len(rawLine) || !isWordChar(rawLine[rightIdx])
+
+						if leftValid && rightValid {
+							// Generate context string only on the first actual match for this line
+							if !hasMatchOnLine {
+								contextStr = strings.TrimSpace(string(rawLine))
+								hasMatchOnLine = true
+							}
+
+							colNum := absoluteIdx + 1
+
+							searchedTags = append(searchedTags, SearchedTags{
+								path:    path,
+								lineNum: lineNum,
+								colNum:  colNum,
+								tag:     kw,
+								context: contextStr,
+							})
+
+						}
+
+						currIdx = absoluteIdx + len(kwb)
+					}
 				}
-
 			}
 			return scanner.Err()
 		}
