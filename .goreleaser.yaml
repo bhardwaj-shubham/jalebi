@@ -1,0 +1,15 @@
+version: 2
+
+builds:
+  - main: ./cmd/jalebi
+    binary: jalebi
+
+    ldflags:
+      - -s -w
+      - -X github.com/bhardwaj-shubham/jalebi/internal/cli.version={{ .Version }}
+
+    goos:
+      - linux
+
+    goarch:
+      - amd64
