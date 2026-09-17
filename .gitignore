@@ -1,6 +1,7 @@
 # Binaries
 /tracker
 /bin/
+/dist/
 
 # Test/build output
 *.test

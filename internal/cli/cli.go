@@ -14,6 +14,8 @@ import (
 	"strings"
 )
 
+var version = "dev"
+
 func CmdArgs(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		return errors.New("no project directory provided")
@@ -79,11 +81,11 @@ func CmdArgs(ctx context.Context, args []string) error {
 func flags(flag string) error {
 	switch flag {
 	case "--version", "-v":
-		fmt.Println("Jalebi: 0.3.0")
+		fmt.Println("Jalebi:", version)
 		return nil
 
 	case "--help", "-h":
-		fmt.Println("Jalebi is made for developer to understand project.\nJalebi CLI Version: 0.3.0")
+		fmt.Printf("Jalebi is made for developer to understand project.\nJalebi CLI Version: %s\n", version)
 		return nil
 
 	default:
