@@ -85,7 +85,7 @@ func flags(flag string) error {
 		return nil
 
 	case "--help", "-h":
-		fmt.Printf("Jalebi is made for developer to understand project.\nJalebi CLI Version: %s\n", version)
+		fmt.Printf("Jalebi helps developers get a quick overview of a software project.\nJalebi CLI Version: %s\n", version)
 		return nil
 
 	default:
