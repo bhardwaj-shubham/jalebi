@@ -3,10 +3,10 @@ package cli
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 )
 
@@ -24,24 +24,125 @@ func TestCmdArgs_Flags(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	testCases := []struct {
+		name    string
 		args    []string
 		wantErr bool
 	}{
-		{[]string{"-v"}, false},
-		{[]string{"--version"}, false},
-		{[]string{"-h"}, false},
-		{[]string{"--help"}, false},
-		{[]string{"--invalid-flag"}, true},
-		{[]string{"--help", tmpDir}, false},
-		{[]string{tmpDir, "--help"}, false},
-	}
+		{
+			name:    "version shorthand",
+			args:    []string{"-v"},
+			wantErr: false,
+		},
+		{
+			name:    "version",
+			args:    []string{"--version"},
+			wantErr: false,
+		},
+		{
+			name:    "help shorthand",
+			args:    []string{"-h"},
+			wantErr: false,
+		},
+		{
+			name:    "help",
+			args:    []string{"-help"},
+			wantErr: false,
+		},
+		{
+			name:    "invalid flag",
+			args:    []string{"--invalid-flag"},
+			wantErr: true,
+		},
+		{
+			name:    "help before path",
+			args:    []string{"-help", tmpDir},
+			wantErr: false,
+		},
+		{
+			name:    "help after path",
+			args:    []string{tmpDir, "-help"},
+			wantErr: true,
+		}}
 
 	for _, tc := range testCases {
-		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			err := CmdArgs(ctx, tc.args)
 
 			if (err != nil) != tc.wantErr {
 				t.Errorf("CmdArgs(%q) error = %v, wantErr %v", tc.args, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestParseFlags(t *testing.T) {
+	testCases := []struct {
+		name     string
+		args     []string
+		wantType AnalysisType
+		wantPath string
+		wantErr  bool
+	}{
+		{
+			name:     "defaults",
+			args:     []string{"."},
+			wantType: TypeAll,
+			wantPath: ".",
+		},
+		{
+			name:     "files",
+			args:     []string{"--type", "files", "."},
+			wantType: TypeFiles,
+			wantPath: ".",
+		},
+		{
+			name:     "languages",
+			args:     []string{"--type", "languages", "."},
+			wantType: TypeLanguages,
+			wantPath: ".",
+		},
+		{
+			name:     "tags",
+			args:     []string{"--type", "tags", "."},
+			wantType: TypeTags,
+			wantPath: ".",
+		},
+		{
+			name:    "invalid type",
+			args:    []string{"--type", "invalid", "."},
+			wantErr: true,
+		},
+		{
+			name:     "ignore",
+			args:     []string{"--ignore", "generated|prisma|integrations", "."},
+			wantType: TypeAll,
+			wantPath: ".",
+		},
+		{
+			name:    "missing path",
+			args:    []string{"--type", "files"},
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := ParseFlags(tc.args, io.Discard)
+
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("ParseFlags() error = %v, wantErr %v", err, tc.wantErr)
+			}
+
+			if tc.wantErr {
+				return
+			}
+
+			if cfg.Type != tc.wantType {
+				t.Errorf("Type = %q, want %q", cfg.Type, tc.wantType)
+			}
+
+			if cfg.Path != tc.wantPath {
+				t.Errorf("Path = %q, want %q", cfg.Path, tc.wantPath)
 			}
 		})
 	}

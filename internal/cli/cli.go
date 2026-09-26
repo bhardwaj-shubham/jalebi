@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -17,80 +16,76 @@ import (
 var version = "dev"
 
 func CmdArgs(ctx context.Context, args []string) error {
-	if len(args) == 0 {
-		return errors.New("no project directory provided")
-	}
-
-	for _, arg := range args {
-		if strings.HasPrefix(arg, "--") || arg == "-v" || arg == "-h" {
-			return flags(arg)
-		}
-	}
-
-	path := args[0]
-
-	info, err := os.Stat(path)
+	cfg, err := ParseFlags(args, os.Stderr)
 	if err != nil {
-		return fmt.Errorf("cannot access path %q: %w", path, err)
+		return err
+	}
+
+	if cfg.ShowHelp {
+		return nil
+	}
+
+	if cfg.ShowVersion {
+		fmt.Println("Jalebi:", version)
+		return nil
+	}
+
+	info, err := os.Stat(cfg.Path)
+	if err != nil {
+		return fmt.Errorf("cannot access path %q: %w", cfg.Path, err)
 	}
 
 	if !info.IsDir() {
-		return fmt.Errorf("path is not a directory: %q", path)
+		return fmt.Errorf("path is not a directory: %q", cfg.Path)
 	}
 
-	projectInfo, err := AnalyzeProject(ctx, path)
-	if err != nil {
-		return err
+	var projectInfo ProjectInfo
+	if cfg.Type == TypeAll || cfg.Type == TypeFiles {
+		projectInfo, err = AnalyzeProject(ctx, cfg.Path)
+		if err != nil {
+			return err
+		}
+
+		fmt.Println("Project:", info.Name())
+		fmt.Printf("- Directories: %d\n- Files: %d\n", projectInfo.Directories, projectInfo.Files)
 	}
 
-	filesCountByLanguage, err := AnalyzeLanguages(ctx, path)
-	if err != nil {
-		return err
+	var filesCountByLanguage FilesCountByLanguage
+	var topLanguages []LanguageCount
+	if cfg.Type == TypeAll || cfg.Type == TypeLanguages {
+		filesCountByLanguage, err = AnalyzeLanguages(ctx, cfg.Path)
+		if err != nil {
+			return err
+		}
+		topLanguages = TopLanguages(filesCountByLanguage)
+
+		fmt.Println("Languages:")
+		for _, file := range topLanguages {
+			fmt.Printf("• %s = %d\n", file.Language, file.Count)
+		}
+		fmt.Println()
 	}
 
-	topLanguages := TopLanguages(filesCountByLanguage)
+	var searchedTags []SearchedTags
+	if cfg.Type == TypeAll || cfg.Type == TypeTags {
+		searchedTags, err = FindTagsInDirectory(ctx, cfg.Path)
+		if err != nil {
+			return err
+		}
 
-	searchedTags, err := FindTagsInDirectory(ctx, path)
-	if err != nil {
-		return err
-	}
-
-	fmt.Println("Project:", info.Name())
-	fmt.Printf("- Directories: %d\n- Files: %d\n", projectInfo.Directories, projectInfo.Files)
-
-	fmt.Println("\nLanguages:")
-	for _, file := range topLanguages {
-		fmt.Printf("• %s = %d\n", file.Language, file.Count)
-	}
-	fmt.Println()
-
-	fmt.Println("Developer Notes:")
-	if len(searchedTags) == 0 {
-		fmt.Println("Nothing found in project!")
-	} else {
-		for _, foundTags := range searchedTags {
-			fmt.Printf("➜ File: %s\n", foundTags.path)
-			fmt.Printf("  ├─ Line/Col: %d:%d | Tag: [%s]\n", foundTags.lineNum, foundTags.colNum, foundTags.tag)
-			fmt.Printf("  └─ Context: %s\n\n", foundTags.context)
+		fmt.Println("Developer Notes:")
+		if len(searchedTags) == 0 {
+			fmt.Println("Nothing found in project!")
+		} else {
+			for _, foundTags := range searchedTags {
+				fmt.Printf("➜ File: %s\n", foundTags.path)
+				fmt.Printf("  ├─ Line/Col: %d:%d | Tag: [%s]\n", foundTags.lineNum, foundTags.colNum, foundTags.tag)
+				fmt.Printf("  └─ Context: %s\n\n", foundTags.context)
+			}
 		}
 	}
 
 	return nil
-}
-
-func flags(flag string) error {
-	switch flag {
-	case "--version", "-v":
-		fmt.Println("Jalebi:", version)
-		return nil
-
-	case "--help", "-h":
-		fmt.Printf("Jalebi helps developers get a quick overview of a software project.\nJalebi CLI Version: %s\n", version)
-		return nil
-
-	default:
-		return fmt.Errorf("unknown flag: %s", flag)
-	}
 }
 
 type ProjectInfo struct {
