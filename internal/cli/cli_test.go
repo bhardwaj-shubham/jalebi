@@ -3,7 +3,9 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -148,6 +150,164 @@ func TestParseFlags(t *testing.T) {
 	}
 }
 
+func TestNewIgnoreMatcher(t *testing.T) {
+	testCases := []struct {
+		name         string
+		ignoredPaths []string
+		wantNames    []string
+		wantPaths    []string
+	}{
+		{
+			name:         "normalize multiple names and paths",
+			ignoredPaths: []string{"prisma", ".github", "./test/", "src/config/", ".env"},
+			wantNames:    []string{"prisma", ".github", ".env"},
+			wantPaths:    []string{"test", "src/config"},
+		},
+		{
+			name:         "ignore empty and whitespace patterns",
+			ignoredPaths: []string{"", "   ", "prisma", "  ", "./test/"},
+			wantNames:    []string{"prisma"},
+			wantPaths:    []string{"test"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			matcher := NewIgnoreMatcher(tc.ignoredPaths)
+
+			if len(matcher.names) != len(tc.wantNames) {
+				t.Errorf("names count = %d, want %d", len(matcher.names), len(tc.wantNames))
+			}
+
+			if len(matcher.paths) != len(tc.wantPaths) {
+				t.Errorf("paths count = %d, want %d", len(matcher.paths), len(tc.wantPaths))
+			}
+
+			for _, wantName := range tc.wantNames {
+				if _, exists := matcher.names[wantName]; !exists {
+					t.Errorf("NewIgnoreMatcher() missing name %q", wantName)
+				}
+			}
+
+			for _, wantPath := range tc.wantPaths {
+				if _, exists := matcher.paths[wantPath]; !exists {
+					t.Errorf("NewIgnoreMatcher() missing path %q", wantPath)
+				}
+			}
+		})
+	}
+}
+
+func TestShouldIgnore(t *testing.T) {
+	matcher := IgnoreMatcher{
+		names: map[string]struct{}{
+			".git":         {},
+			"node_modules": {},
+			"temp.log":     {},
+		},
+		paths: map[string]struct{}{
+			"src/secret": {},
+			"build/out":  {},
+		},
+	}
+
+	root := t.TempDir()
+
+	dirs := []string{
+		"node_modules",
+		"src",
+		"src/logs",
+		"src/secret",
+		"src/secret-public",
+		"build",
+		"build/out",
+	}
+
+	for _, dir := range dirs {
+		dirPath := filepath.Join(root, dir)
+		if err := os.MkdirAll(dirPath, 0755); err != nil {
+			t.Fatalf("failed to create a directory %s: %v", dir, err)
+		}
+	}
+
+	files := map[string]string{
+		"src/logs/temp.log": "temporary log",
+		"main.go":           "package main",
+	}
+
+	for relPath, content := range files {
+		fullPath := filepath.Join(root, relPath)
+		if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write a file %s: %v", relPath, err)
+		}
+	}
+
+	testCases := []struct {
+		name     string
+		subPath  string
+		expected bool
+	}{
+		{
+			name:     "ignore by name directory",
+			subPath:  "node_modules",
+			expected: true,
+		},
+		{
+			name:     "ignore by name deep file",
+			subPath:  "src/logs/temp.log",
+			expected: true,
+		},
+		{
+			name:     "ignore by exact path",
+			subPath:  "src/secret",
+			expected: true,
+		},
+		{
+			name:     "do not ignore similar path",
+			subPath:  "src/secret-public",
+			expected: false,
+		},
+		{
+			name:     "do not ignore normal file",
+			subPath:  "main.go",
+			expected: false,
+		},
+		{
+			name:     "do not ignore normal directory",
+			subPath:  "src",
+			expected: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(root, tc.subPath)
+
+			entries, err := os.ReadDir(filepath.Dir(path))
+			if err != nil {
+				t.Fatalf("failed to read directory %s: %v", filepath.Dir(path), err)
+			}
+
+			var entry fs.DirEntry
+			for _, candidate := range entries {
+				if candidate.Name() == filepath.Base(path) {
+					entry = candidate
+					break
+				}
+			}
+
+			if entry == nil {
+				t.Fatalf("entry not found: %s", tc.subPath)
+			}
+
+			got := matcher.ShouldIgnore(root, path, entry)
+			if got != tc.expected {
+				t.Errorf("ShouldIgnore() = %v, want %v", got, tc.expected)
+			}
+		})
+	}
+}
+
 func TestCmdArgs_NonExistentPath(t *testing.T) {
 	ctx := context.Background()
 	err := CmdArgs(ctx, []string{"/path/does/not/exist/1234"})
@@ -211,13 +371,59 @@ func TestAnalyzeProject(t *testing.T) {
 		}
 	}
 
-	projectInfo, err := AnalyzeProject(ctx, tmpDir)
+	matcher := NewIgnoreMatcher(nil)
+
+	projectInfo, err := AnalyzeProject(ctx, tmpDir, matcher)
 	if err != nil {
 		t.Fatalf("failed to analyze project: %v", err)
 	}
 
 	if projectInfo.Directories != 2 || projectInfo.Files != 3 {
 		t.Errorf("expected directories=2 & files=3, got directories=%d & files=%d", projectInfo.Directories, projectInfo.Files)
+	}
+}
+
+func TestAnalyzeProject_WithIgnore(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	dirs := []string{"src", "src/generated", "empty", "bin", ".git", "node_modules"}
+
+	for _, dir := range dirs {
+		dirPath := filepath.Join(tmpDir, dir)
+		if err := os.MkdirAll(dirPath, 0755); err != nil {
+			t.Fatalf("failed to create directory %s: %v", dir, err)
+		}
+	}
+
+	files := map[string]string{
+		".env":                  "PORT=8080\n",
+		"hello world.txt":       "Hello, World!",
+		"src/main.go":           "package main\n\nfunc main()	{}\n",
+		"src/generated/code.go": "package generated",
+		"bin/ignored":           "binary artifact",
+		".git/ignored":          "git metadata",
+		"node_modules/ignored":  "module cache",
+	}
+
+	for relPath, content := range files {
+		fullPath := filepath.Join(tmpDir, relPath)
+		if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write file %s: %v", relPath, err)
+		}
+	}
+
+	matcher := NewIgnoreMatcher([]string{
+		".env", "hello world.txt", "src/generated",
+	})
+
+	projectInfo, err := AnalyzeProject(ctx, tmpDir, matcher)
+	if err != nil {
+		t.Fatalf("failed to analyze project: %v", err)
+	}
+
+	if projectInfo.Directories != 2 || projectInfo.Files != 1 {
+		t.Errorf("expected directories=2 & files=1, got directories=%d & files=%d", projectInfo.Directories, projectInfo.Files)
 	}
 }
 
@@ -254,9 +460,60 @@ func TestAnalyzeLanguages(t *testing.T) {
 		}
 	}
 
-	filesCountByLanguage, err := AnalyzeLanguages(ctx, tmpDir)
+	matcher := NewIgnoreMatcher(nil)
+
+	filesCountByLanguage, err := AnalyzeLanguages(ctx, tmpDir, matcher)
 	if err != nil {
 		t.Errorf("failed to analyze languages: %v", err)
+	}
+
+	for language, expected := range expectedOutput {
+		actual := filesCountByLanguage[language]
+
+		if actual != expected {
+			t.Errorf("AnalyzeLanguages: for %s expected %d, get %d", language, expected, actual)
+		}
+	}
+}
+
+func TestAnalyzeLanguages_WithIgnore(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	targets := []string{
+		"sample.go",
+		"sample.py",
+		"sample.js",
+		"sample.ts",
+		"Dockerfile",
+		"Makefile",
+		".env",
+		".gitignore",
+		"sample.xyz",
+	}
+	expectedOutput := map[string]int{
+		"Go":         1,
+		"Python":     1,
+		"JavaScript": 1,
+		"TypeScript": 1,
+		"NO_EXT":     2,
+		"Others":     1,
+	}
+
+	for _, name := range targets {
+		filePath := filepath.Join(tmpDir, name)
+
+		err := os.WriteFile(filePath, []byte{}, 0644)
+		if err != nil {
+			t.Fatalf("failed to create file %s: %v", name, err)
+		}
+	}
+
+	matcher := NewIgnoreMatcher([]string{".env", ".gitignore"})
+
+	filesCountByLanguage, err := AnalyzeLanguages(ctx, tmpDir, matcher)
+	if err != nil {
+		t.Fatalf("failed to analyze languages: %v", err)
 	}
 
 	for language, expected := range expectedOutput {
@@ -339,7 +596,9 @@ func TestFindTagsInDirectory(t *testing.T) {
 		}
 	}
 
-	searchedTags, err := FindTagsInDirectory(ctx, tmpDir)
+	matcher := NewIgnoreMatcher(nil)
+
+	searchedTags, err := FindTagsInDirectory(ctx, tmpDir, matcher)
 	if err != nil {
 		t.Errorf("failed to search notes: %v", err)
 	}
@@ -389,12 +648,90 @@ func TestFindTagsInDirectory(t *testing.T) {
 	}
 }
 
+func TestFindTagsInDirectory_WithIgnore(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	dirs := []string{"src", "test", "bin", ".git", "node_modules"}
+
+	for _, dir := range dirs {
+		dirPath := filepath.Join(tmpDir, dir)
+		if err := os.MkdirAll(dirPath, 0755); err != nil {
+			t.Fatalf("failed to create directory %s: %v", dir, err)
+		}
+	}
+
+	files := map[string]string{
+		".env":                 "//TODO: change port to 3000\nPORT=8080\n",
+		"hello-world.txt":      "//REFACTOR: format file \nHello, World!",
+		"src/main.go":          "package main\n\n//TODO: add code NOTE: use snippets\nfunc main()	{}\n",
+		"test/main_test.go":    "//TODO: add the test for main function\n",
+		"src/secret.txt":       "//FIXME: please add secret here\n",
+		"work.txt":             "TODOING work",
+		"Dockerfile":           "//TODO: add postgres container\n",
+		"Makefile":             "//FIXME: fix makefile build command\n",
+		"bin/ignored":          "binary artifact",
+		".git/ignored":         "git metadata",
+		"node_modules/ignored": "module cache",
+	}
+
+	for relPath, content := range files {
+		fullPath := filepath.Join(tmpDir, relPath)
+		if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write file %s: %v", relPath, err)
+		}
+	}
+
+	matcher := NewIgnoreMatcher([]string{
+		"test/", "secret.txt", "Dockerfile", "Makefile",
+	})
+
+	searchedTags, err := FindTagsInDirectory(ctx, tmpDir, matcher)
+	if err != nil {
+		t.Fatalf("failed to search notes: %v", err)
+	}
+
+	expectedSearchedTags := []SearchedTags{
+		{
+			path:    filepath.Join(tmpDir, "src", "main.go"),
+			lineNum: 3,
+			colNum:  3,
+			tag:     "TODO",
+			context: "//TODO: add code NOTE: use snippets",
+		},
+		{
+			path:    filepath.Join(tmpDir, "src", "main.go"),
+			lineNum: 3,
+			colNum:  18,
+			tag:     "NOTE",
+			context: "//TODO: add code NOTE: use snippets",
+		},
+	}
+
+	fmt.Println("searchedTags: --ignore", searchedTags)
+
+	if len(searchedTags) != len(expectedSearchedTags) {
+		t.Fatalf("expected %d searched notes, got %d",
+			len(expectedSearchedTags), len(searchedTags))
+	}
+
+	for idx, expectedResult := range expectedSearchedTags {
+		actualResult := searchedTags[idx]
+
+		if !reflect.DeepEqual(expectedResult, actualResult) {
+			t.Errorf("searched notes: expected: %v, get: %v", expectedResult, actualResult)
+		}
+	}
+}
+
 func TestAnalyzeProjectCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	tmpDir := t.TempDir()
 
-	_, err := AnalyzeProject(ctx, tmpDir)
+	matcher := NewIgnoreMatcher(nil)
+
+	_, err := AnalyzeProject(ctx, tmpDir, matcher)
 
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)

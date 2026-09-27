@@ -39,9 +39,11 @@ func CmdArgs(ctx context.Context, args []string) error {
 		return fmt.Errorf("path is not a directory: %q", cfg.Path)
 	}
 
+	matcher := NewIgnoreMatcher(cfg.IgnoreList)
+
 	var projectInfo ProjectInfo
 	if cfg.Type == TypeAll || cfg.Type == TypeFiles {
-		projectInfo, err = AnalyzeProject(ctx, cfg.Path)
+		projectInfo, err = AnalyzeProject(ctx, cfg.Path, matcher)
 		if err != nil {
 			return err
 		}
@@ -53,7 +55,7 @@ func CmdArgs(ctx context.Context, args []string) error {
 	var filesCountByLanguage FilesCountByLanguage
 	var topLanguages []LanguageCount
 	if cfg.Type == TypeAll || cfg.Type == TypeLanguages {
-		filesCountByLanguage, err = AnalyzeLanguages(ctx, cfg.Path)
+		filesCountByLanguage, err = AnalyzeLanguages(ctx, cfg.Path, matcher)
 		if err != nil {
 			return err
 		}
@@ -68,7 +70,7 @@ func CmdArgs(ctx context.Context, args []string) error {
 
 	var searchedTags []SearchedTags
 	if cfg.Type == TypeAll || cfg.Type == TypeTags {
-		searchedTags, err = FindTagsInDirectory(ctx, cfg.Path)
+		searchedTags, err = FindTagsInDirectory(ctx, cfg.Path, matcher)
 		if err != nil {
 			return err
 		}
@@ -95,7 +97,7 @@ type ProjectInfo struct {
 
 type FilesCountByLanguage map[string]int
 
-func AnalyzeProject(ctx context.Context, root string) (ProjectInfo, error) {
+func AnalyzeProject(ctx context.Context, root string, matcher IgnoreMatcher) (ProjectInfo, error) {
 	files, directories := 0, 0
 
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -117,6 +119,13 @@ func AnalyzeProject(ctx context.Context, root string) (ProjectInfo, error) {
 			return fs.SkipDir
 		}
 
+		if matcher.ShouldIgnore(root, path, d) {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+
 		if d.IsDir() {
 			directories++
 		} else {
@@ -136,7 +145,7 @@ func AnalyzeProject(ctx context.Context, root string) (ProjectInfo, error) {
 	}, nil
 }
 
-func AnalyzeLanguages(ctx context.Context, root string) (FilesCountByLanguage, error) {
+func AnalyzeLanguages(ctx context.Context, root string, matcher IgnoreMatcher) (FilesCountByLanguage, error) {
 	filesCountByLanguage := make(FilesCountByLanguage)
 
 	extToLanguage := map[string]string{
@@ -165,6 +174,13 @@ func AnalyzeLanguages(ctx context.Context, root string) (FilesCountByLanguage, e
 
 		if d.IsDir() && (d.Name() == "bin" || d.Name() == ".git" || d.Name() == "node_modules") {
 			return fs.SkipDir
+		}
+
+		if matcher.ShouldIgnore(root, path, d) {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
 		}
 
 		if !d.IsDir() {
@@ -234,7 +250,7 @@ func isWordChar(b byte) bool {
 	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
 }
 
-func FindTagsInDirectory(ctx context.Context, rootPath string) ([]SearchedTags, error) {
+func FindTagsInDirectory(ctx context.Context, root string, matcher IgnoreMatcher) ([]SearchedTags, error) {
 	searchedTags := make([]SearchedTags, 0)
 
 	// Pre-define keywords as byte slices
@@ -251,7 +267,7 @@ func FindTagsInDirectory(ctx context.Context, rootPath string) ([]SearchedTags, 
 		"Dockerfile": {}, "Makefile": {},
 	}
 
-	err := filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -264,6 +280,13 @@ func FindTagsInDirectory(ctx context.Context, rootPath string) ([]SearchedTags, 
 
 		if d.IsDir() && (d.Name() == "bin" || d.Name() == ".git" || d.Name() == "node_modules") {
 			return fs.SkipDir
+		}
+
+		if matcher.ShouldIgnore(root, path, d) {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
 		}
 
 		if !d.IsDir() {
