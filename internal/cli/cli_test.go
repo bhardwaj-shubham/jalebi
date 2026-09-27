@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -707,8 +706,6 @@ func TestFindTagsInDirectory_WithIgnore(t *testing.T) {
 			context: "//TODO: add code NOTE: use snippets",
 		},
 	}
-
-	fmt.Println("searchedTags: --ignore", searchedTags)
 
 	if len(searchedTags) != len(expectedSearchedTags) {
 		t.Fatalf("expected %d searched notes, got %d",
