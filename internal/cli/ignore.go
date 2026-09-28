@@ -51,7 +51,6 @@ func (m IgnoreMatcher) ShouldIgnore(root, path string, d fs.DirEntry) bool {
 	rel, err := filepath.Rel(root, path)
 	if err != nil {
 		return false
-
 	}
 
 	if _, exists := m.paths[rel]; exists {
