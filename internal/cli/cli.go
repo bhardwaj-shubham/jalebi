@@ -1,16 +1,11 @@
 package cli
 
 import (
-	"bufio"
-	"bytes"
 	"cmp"
 	"context"
 	"fmt"
-	"io/fs"
 	"os"
-	"path/filepath"
 	"slices"
-	"strings"
 )
 
 var version = "dev"
@@ -40,51 +35,25 @@ func CmdArgs(ctx context.Context, args []string) error {
 	}
 
 	matcher := NewIgnoreMatcher(cfg.IgnoreList)
+	writer := os.Stdout
 
-	var projectInfo ProjectInfo
-	if cfg.Type == TypeAll || cfg.Type == TypeFiles {
-		projectInfo, err = AnalyzeProject(ctx, cfg.Path, matcher)
-		if err != nil {
-			return err
-		}
-
-		fmt.Println("Project:", info.Name())
-		fmt.Printf("- Directories: %d\n- Files: %d\n", projectInfo.Directories, projectInfo.Files)
+	result, err := Analyze(ctx, cfg.Path, matcher, cfg.Type)
+	if err != nil {
+		return err
 	}
 
-	var filesCountByLanguage FilesCountByLanguage
-	var topLanguages []LanguageCount
-	if cfg.Type == TypeAll || cfg.Type == TypeLanguages {
-		filesCountByLanguage, err = AnalyzeLanguages(ctx, cfg.Path, matcher)
-		if err != nil {
-			return err
-		}
-		topLanguages = TopLanguages(filesCountByLanguage)
+	switch cfg.Type {
+	case TypeAll:
+		DisplayAnalysis(info.Name(), result, writer)
 
-		fmt.Println("Languages:")
-		for _, file := range topLanguages {
-			fmt.Printf("• %s = %d\n", file.Language, file.Count)
-		}
-		fmt.Println()
-	}
+	case TypeFiles:
+		DisplayProject(info.Name(), result.ProjectInfo, writer)
 
-	var searchedTags []SearchedTags
-	if cfg.Type == TypeAll || cfg.Type == TypeTags {
-		searchedTags, err = FindTagsInDirectory(ctx, cfg.Path, matcher)
-		if err != nil {
-			return err
-		}
+	case TypeLanguages:
+		DisplayLanguages(result.Languages, writer)
 
-		fmt.Println("Developer Notes:")
-		if len(searchedTags) == 0 {
-			fmt.Println("Nothing found in project!")
-		} else {
-			for _, foundTags := range searchedTags {
-				fmt.Printf("➜ File: %s\n", foundTags.path)
-				fmt.Printf("  ├─ Line/Col: %d:%d | Tag: [%s]\n", foundTags.lineNum, foundTags.colNum, foundTags.tag)
-				fmt.Printf("  └─ Context: %s\n\n", foundTags.context)
-			}
-		}
+	case TypeTags:
+		DisplayTags(result.Tags, writer)
 	}
 
 	return nil
@@ -96,118 +65,6 @@ type ProjectInfo struct {
 }
 
 type FilesCountByLanguage map[string]int
-
-func AnalyzeProject(ctx context.Context, root string, matcher IgnoreMatcher) (ProjectInfo, error) {
-	files, directories := 0, 0
-
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		if path == root {
-			return nil
-		}
-
-		if d.IsDir() && (d.Name() == "bin" || d.Name() == ".git" || d.Name() == "node_modules") {
-			return fs.SkipDir
-		}
-
-		if matcher.ShouldIgnore(root, path, d) {
-			if d.IsDir() {
-				return fs.SkipDir
-			}
-			return nil
-		}
-
-		if d.IsDir() {
-			directories++
-		} else {
-			files++
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		return ProjectInfo{}, err
-	}
-
-	return ProjectInfo{
-		Files:       files,
-		Directories: directories,
-	}, nil
-}
-
-func AnalyzeLanguages(ctx context.Context, root string, matcher IgnoreMatcher) (FilesCountByLanguage, error) {
-	filesCountByLanguage := make(FilesCountByLanguage)
-
-	extToLanguage := map[string]string{
-		"[no_extension]": "NO_EXT",
-		"go":             "Go",
-		"py":             "Python",
-		"ts":             "TypeScript",
-		"js":             "JavaScript",
-		"md":             "Markdown",
-	}
-
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		if path == root {
-			return nil
-		}
-
-		if d.IsDir() && (d.Name() == "bin" || d.Name() == ".git" || d.Name() == "node_modules") {
-			return fs.SkipDir
-		}
-
-		if matcher.ShouldIgnore(root, path, d) {
-			if d.IsDir() {
-				return fs.SkipDir
-			}
-			return nil
-		}
-
-		if !d.IsDir() {
-			ext := filepath.Ext(path)
-			if ext == "" {
-				ext = "[no_extension]"
-			} else {
-				ext = strings.ToLower(ext[1:])
-			}
-
-			language := extToLanguage[ext]
-			if language == "" {
-				filesCountByLanguage["Others"]++
-			} else {
-				filesCountByLanguage[language]++
-			}
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	return filesCountByLanguage, nil
-}
 
 type LanguageCount struct {
 	Language string
@@ -236,149 +93,4 @@ func TopLanguages(filesCountByLanguage FilesCountByLanguage) []LanguageCount {
 	}
 
 	return topLanguages
-}
-
-type SearchedTags struct {
-	path    string
-	lineNum int
-	colNum  int
-	tag     string
-	context string
-}
-
-func isWordChar(b byte) bool {
-	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
-}
-
-func FindTagsInDirectory(ctx context.Context, root string, matcher IgnoreMatcher) ([]SearchedTags, error) {
-	searchedTags := make([]SearchedTags, 0)
-
-	// Pre-define keywords as byte slices
-	keywords := []string{"TODO", "FIXME", "BUG", "HACK", "REFACTOR", "NOTE"}
-	kwBytes := make([][]byte, len(keywords))
-	for i, kw := range keywords {
-		kwBytes[i] = []byte(kw)
-	}
-
-	allowedExtensions := map[string]struct{}{
-		"go": {}, "py": {}, "ts": {}, "js": {}, "md": {},
-	}
-	allowedFilenames := map[string]struct{}{
-		"Dockerfile": {}, "Makefile": {},
-	}
-
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		if d.IsDir() && (d.Name() == "bin" || d.Name() == ".git" || d.Name() == "node_modules") {
-			return fs.SkipDir
-		}
-
-		if matcher.ShouldIgnore(root, path, d) {
-			if d.IsDir() {
-				return fs.SkipDir
-			}
-			return nil
-		}
-
-		if !d.IsDir() {
-			ext := filepath.Ext(path)
-
-			if ext != "" {
-				ext = strings.ToLower(ext[1:])
-
-				if _, exists := allowedExtensions[ext]; !exists {
-					return nil
-				}
-			} else {
-				if _, exists := allowedFilenames[d.Name()]; !exists {
-					return nil
-				}
-			}
-
-			file, err := os.Open(path)
-			if err != nil {
-				return err
-			}
-			defer file.Close()
-
-			scanner := bufio.NewScanner(file)
-			buf := make([]byte, 64*1024)
-			scanner.Buffer(buf, 1024*1024)
-
-			lineNum := 0
-
-			for scanner.Scan() {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				default:
-				}
-
-				lineNum++
-				rawLine := scanner.Bytes() // Reuses Scanner's internal buffer
-
-				var contextStr string // Lazily generated only if a match is found
-				hasMatchOnLine := false
-
-				// Check each keyword on the line
-				for i, kwb := range kwBytes {
-					kw := keywords[i]
-					currIdx := 0
-
-					for {
-						idx := bytes.Index(rawLine[currIdx:], kwb)
-						if idx == -1 {
-							break
-						}
-
-						absoluteIdx := currIdx + idx
-
-						// Emulate \b (word boundary) check
-						leftValid := absoluteIdx == 0 || !isWordChar(rawLine[absoluteIdx-1])
-						rightIdx := absoluteIdx + len(kwb)
-						rightValid := rightIdx == len(rawLine) || !isWordChar(rawLine[rightIdx])
-
-						if leftValid && rightValid {
-							// Generate context string only on the first actual match for this line
-							if !hasMatchOnLine {
-								contextStr = strings.TrimSpace(string(rawLine))
-								hasMatchOnLine = true
-							}
-
-							colNum := absoluteIdx + 1
-
-							searchedTags = append(searchedTags, SearchedTags{
-								path:    path,
-								lineNum: lineNum,
-								colNum:  colNum,
-								tag:     kw,
-								context: contextStr,
-							})
-
-						}
-
-						currIdx = absoluteIdx + len(kwb)
-					}
-				}
-			}
-			return scanner.Err()
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	return searchedTags, nil
 }

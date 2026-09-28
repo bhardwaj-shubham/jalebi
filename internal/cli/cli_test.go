@@ -78,11 +78,12 @@ func TestCmdArgs_Flags(t *testing.T) {
 
 func TestParseFlags(t *testing.T) {
 	testCases := []struct {
-		name     string
-		args     []string
-		wantType AnalysisType
-		wantPath string
-		wantErr  bool
+		name       string
+		args       []string
+		wantType   AnalysisType
+		wantPath   string
+		wantIgnore IgnoreList
+		wantErr    bool
 	}{
 		{
 			name:     "defaults",
@@ -114,10 +115,11 @@ func TestParseFlags(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:     "ignore",
-			args:     []string{"--ignore", "generated|prisma|integrations", "."},
-			wantType: TypeAll,
-			wantPath: ".",
+			name:       "ignore",
+			args:       []string{"--ignore", "generated|prisma|integrations", "."},
+			wantType:   TypeAll,
+			wantPath:   ".",
+			wantIgnore: []string{"generated", "prisma", "integrations"},
 		},
 		{
 			name:    "missing path",
@@ -145,6 +147,12 @@ func TestParseFlags(t *testing.T) {
 			if cfg.Path != tc.wantPath {
 				t.Errorf("Path = %q, want %q", cfg.Path, tc.wantPath)
 			}
+
+			if tc.wantIgnore != nil {
+				if !reflect.DeepEqual(cfg.IgnoreList, tc.wantIgnore) {
+					t.Errorf("IgnoreList = %v, want %v", cfg.IgnoreList, tc.wantIgnore)
+				}
+			}
 		})
 	}
 }
@@ -165,6 +173,12 @@ func TestNewIgnoreMatcher(t *testing.T) {
 		{
 			name:         "ignore empty and whitespace patterns",
 			ignoredPaths: []string{"", "   ", "prisma", "  ", "./test/"},
+			wantNames:    []string{"prisma"},
+			wantPaths:    []string{"test"},
+		},
+		{
+			name:         "ignore duplicate patterns",
+			ignoredPaths: []string{"prisma", "prisma", "./test/", "test/"},
 			wantNames:    []string{"prisma"},
 			wantPaths:    []string{"test"},
 		},
@@ -372,7 +386,9 @@ func TestAnalyzeProject(t *testing.T) {
 
 	matcher := NewIgnoreMatcher(nil)
 
-	projectInfo, err := AnalyzeProject(ctx, tmpDir, matcher)
+	result, err := Analyze(ctx, tmpDir, matcher, TypeFiles)
+	projectInfo := result.ProjectInfo
+
 	if err != nil {
 		t.Fatalf("failed to analyze project: %v", err)
 	}
@@ -416,7 +432,9 @@ func TestAnalyzeProject_WithIgnore(t *testing.T) {
 		".env", "hello world.txt", "src/generated",
 	})
 
-	projectInfo, err := AnalyzeProject(ctx, tmpDir, matcher)
+	result, err := Analyze(ctx, tmpDir, matcher, TypeFiles)
+	projectInfo := result.ProjectInfo
+
 	if err != nil {
 		t.Fatalf("failed to analyze project: %v", err)
 	}
@@ -461,7 +479,9 @@ func TestAnalyzeLanguages(t *testing.T) {
 
 	matcher := NewIgnoreMatcher(nil)
 
-	filesCountByLanguage, err := AnalyzeLanguages(ctx, tmpDir, matcher)
+	result, err := Analyze(ctx, tmpDir, matcher, TypeLanguages)
+	filesCountByLanguage := result.Languages
+
 	if err != nil {
 		t.Errorf("failed to analyze languages: %v", err)
 	}
@@ -510,7 +530,9 @@ func TestAnalyzeLanguages_WithIgnore(t *testing.T) {
 
 	matcher := NewIgnoreMatcher([]string{".env", ".gitignore"})
 
-	filesCountByLanguage, err := AnalyzeLanguages(ctx, tmpDir, matcher)
+	result, err := Analyze(ctx, tmpDir, matcher, TypeLanguages)
+	filesCountByLanguage := result.Languages
+
 	if err != nil {
 		t.Fatalf("failed to analyze languages: %v", err)
 	}
@@ -521,6 +543,47 @@ func TestAnalyzeLanguages_WithIgnore(t *testing.T) {
 		if actual != expected {
 			t.Errorf("AnalyzeLanguages: for %s expected %d, get %d", language, expected, actual)
 		}
+	}
+}
+
+func TestAnalyze(t *testing.T) {
+	root := t.TempDir()
+
+	createBenchmarkProject(t, root)
+
+	matcher := NewIgnoreMatcher(nil)
+	ctx := context.Background()
+
+	wantProject, err := Analyze(ctx, root, matcher, TypeFiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantLanguages, err := Analyze(ctx, root, matcher, TypeLanguages)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantTags, err := Analyze(ctx, root, matcher, TypeTags)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Analyze(ctx, root, matcher, TypeAll)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(got.ProjectInfo, wantProject.ProjectInfo) {
+		t.Fatalf("project mismatch:\n got: %#v\nwant: %#v", got.ProjectInfo, wantProject.ProjectInfo)
+	}
+
+	if !reflect.DeepEqual(got.Languages, wantLanguages.Languages) {
+		t.Fatalf("languages mismatch:\n got: %#v\nwant: %#v", got.Languages, wantLanguages.Languages)
+	}
+
+	if !reflect.DeepEqual(got.Tags, wantTags.Tags) {
+		t.Fatalf("tags mismatch:\n got: %#v\nwant: %#v", got.Tags, wantTags.Tags)
 	}
 }
 
@@ -597,7 +660,9 @@ func TestFindTagsInDirectory(t *testing.T) {
 
 	matcher := NewIgnoreMatcher(nil)
 
-	searchedTags, err := FindTagsInDirectory(ctx, tmpDir, matcher)
+	result, err := Analyze(ctx, tmpDir, matcher, TypeTags)
+	searchedTags := result.Tags
+
 	if err != nil {
 		t.Errorf("failed to search notes: %v", err)
 	}
@@ -685,7 +750,9 @@ func TestFindTagsInDirectory_WithIgnore(t *testing.T) {
 		"test/", "secret.txt", "Dockerfile", "Makefile",
 	})
 
-	searchedTags, err := FindTagsInDirectory(ctx, tmpDir, matcher)
+	result, err := Analyze(ctx, tmpDir, matcher, TypeTags)
+	searchedTags := result.Tags
+
 	if err != nil {
 		t.Fatalf("failed to search notes: %v", err)
 	}
@@ -728,7 +795,7 @@ func TestAnalyzeProjectCancellation(t *testing.T) {
 
 	matcher := NewIgnoreMatcher(nil)
 
-	_, err := AnalyzeProject(ctx, tmpDir, matcher)
+	_, err := Analyze(ctx, tmpDir, matcher, TypeFiles)
 
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
