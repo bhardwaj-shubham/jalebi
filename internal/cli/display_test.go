@@ -80,3 +80,38 @@ func TestDisplayAnalysis(t *testing.T) {
 		})
 	}
 }
+
+func TestDisplaySkippedLineWarnings(t *testing.T) {
+	var buf bytes.Buffer
+
+	skippedLines := []SkippedLine{
+		{
+			Path:    "project/main.go",
+			LineNum: 10,
+		},
+		{
+			Path:    "project/generated.go",
+			LineNum: 25,
+		},
+	}
+
+	DisplaySkippedLineWarnings(skippedLines, &buf)
+
+	want := "" +
+		"warning: skipped oversized line in project/main.go at line 10 (maximum line size: 1048576 bytes)\n" +
+		"warning: skipped oversized line in project/generated.go at line 25 (maximum line size: 1048576 bytes)\n"
+
+	if got := buf.String(); got != want {
+		t.Fatalf("unexpected warnings:\n%s", got)
+	}
+}
+
+func TestDisplaySkippedLineWarnings_Empty(t *testing.T) {
+	var buf bytes.Buffer
+
+	DisplaySkippedLineWarnings(nil, &buf)
+
+	if got := buf.String(); got != "" {
+		t.Fatalf("expected no warning, got %q", got)
+	}
+}

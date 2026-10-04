@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -18,6 +19,16 @@ type SearchedTags struct {
 	context string
 }
 
+type SkippedLine struct {
+	Path    string
+	LineNum int
+}
+
+type TagScanResult struct {
+	Tags         []SearchedTags
+	SkippedLines []SkippedLine
+}
+
 func isWordChar(b byte) bool {
 	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
 }
@@ -30,46 +41,70 @@ func findTagsInFile(
 	kwBytes [][]byte,
 	allowedExtensions map[string]struct{},
 	allowedFilenames map[string]struct{},
-) ([]SearchedTags, error) {
+) (TagScanResult, error) {
+
+	filename := strings.ToLower(d.Name())
+
+	for _, suffix := range skippedFilenameSuffixes {
+		if strings.HasSuffix(filename, suffix) {
+			return TagScanResult{}, nil
+		}
+	}
+
 	ext := filepath.Ext(path)
 
 	if ext != "" {
 		ext = strings.ToLower(ext[1:])
 
 		if _, exists := allowedExtensions[ext]; !exists {
-			return nil, nil
+			return TagScanResult{}, nil
 		}
 	} else {
 		if _, exists := allowedFilenames[d.Name()]; !exists {
-			return nil, nil
+			return TagScanResult{}, nil
 		}
 	}
 
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return TagScanResult{}, err
 	}
 	defer file.Close()
 
 	searchedTags := make([]SearchedTags, 0)
+	skippedLines := make([]SkippedLine, 0)
 
-	scanner := bufio.NewScanner(file)
-
-	buf := make([]byte, 64*1024)
-	scanner.Buffer(buf, 1024*1024)
+	reader := bufio.NewReaderSize(file, tagScanBufferSize)
 
 	lineNum := 0
 
-	for scanner.Scan() {
+	for {
+		result, err := readLine(ctx, reader)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+
+			return TagScanResult{}, err
+		}
+
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return TagScanResult{}, ctx.Err()
 		default:
 		}
 
 		lineNum++
 
-		rawLine := scanner.Bytes()
+		if result.oversized {
+			skippedLines = append(skippedLines, SkippedLine{
+				Path:    path,
+				LineNum: lineNum,
+			})
+			continue
+		}
+
+		rawLine := result.line
 
 		var contextStr string
 		hasMatchOnLine := false
@@ -113,9 +148,84 @@ func findTagsInFile(
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
+	return TagScanResult{
+		Tags:         searchedTags,
+		SkippedLines: skippedLines,
+	}, nil
+}
 
-	return searchedTags, nil
+const (
+	tagScanBufferSize  = 64 * 1024
+	tagScanMaxLineSize = 1024 * 1024
+)
+
+type readLineResult struct {
+	line      []byte
+	oversized bool
+}
+
+func readLine(ctx context.Context, reader *bufio.Reader) (readLineResult, error) {
+	var line []byte
+	lineSize := 0
+	oversized := false
+
+	for {
+
+		select {
+		case <-ctx.Done():
+			return readLineResult{}, ctx.Err()
+		default:
+		}
+
+		fragment, isPrefix, err := reader.ReadLine()
+		if err != nil {
+			if err == io.EOF {
+				if lineSize == 0 {
+					return readLineResult{}, io.EOF
+				}
+
+				return readLineResult{
+					line:      line,
+					oversized: oversized,
+				}, nil
+			}
+
+			return readLineResult{}, err
+		}
+
+		if !isPrefix && line == nil {
+			if len(fragment) > tagScanMaxLineSize {
+				return readLineResult{
+					oversized: true,
+				}, nil
+			}
+
+			return readLineResult{
+				line: fragment,
+			}, nil
+		}
+
+		if !oversized {
+			lineSize += len(fragment)
+
+			if lineSize > tagScanMaxLineSize {
+				oversized = true
+				line = nil
+			} else {
+				// Allocate enough capacity for the first fragment.
+				if line == nil {
+					line = make([]byte, 0, tagScanMaxLineSize)
+				}
+
+				line = append(line, fragment...)
+			}
+		}
+
+		if !isPrefix {
+			return readLineResult{
+				line:      line,
+				oversized: oversized,
+			}, nil
+		}
+	}
 }

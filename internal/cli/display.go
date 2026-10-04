@@ -41,6 +41,18 @@ func DisplayTags(tags []SearchedTags, w io.Writer) {
 	}
 }
 
+func DisplaySkippedLineWarnings(skippedLines []SkippedLine, w io.Writer) {
+	for _, skipped := range skippedLines {
+		fmt.Fprintf(
+			w,
+			"warning: skipped oversized line in %s at line %d (maximum line size: %d bytes)\n",
+			skipped.Path,
+			skipped.LineNum,
+			tagScanMaxLineSize,
+		)
+	}
+}
+
 func DisplayAnalysis(
 	projectName string,
 	result AnalysisResult,

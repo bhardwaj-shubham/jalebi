@@ -42,6 +42,10 @@ func CmdArgs(ctx context.Context, args []string) error {
 		return err
 	}
 
+	if cfg.Type == TypeAll || cfg.Type == TypeTags {
+		DisplaySkippedLineWarnings(result.SkippedLines, os.Stderr)
+	}
+
 	switch cfg.Type {
 	case TypeAll:
 		DisplayAnalysis(info.Name(), result, writer)
