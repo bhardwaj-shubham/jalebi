@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"reflect"
 	"testing"
 )
 
@@ -113,5 +114,44 @@ func TestDisplaySkippedLineWarnings_Empty(t *testing.T) {
 
 	if got := buf.String(); got != "" {
 		t.Fatalf("expected no warning, got %q", got)
+	}
+}
+
+func TestTopLanguages(t *testing.T) {
+	input1 := FilesCountByLanguage{
+		"Go":         10,
+		"Python":     7,
+		"JavaScript": 7,
+		"TypeScript": 5,
+		"Markdown":   2,
+		"Others":     20,
+		"NO_EXT":     15,
+	}
+
+	input2 := FilesCountByLanguage{
+		"Go":     5,
+		"Python": 3,
+	}
+
+	expected1 := []LanguageCount{
+		{Language: "Go", Count: 10},
+		{Language: "JavaScript", Count: 7},
+		{Language: "Python", Count: 7},
+	}
+
+	expected2 := []LanguageCount{
+		{Language: "Go", Count: 5},
+		{Language: "Python", Count: 3},
+	}
+
+	actual1 := TopLanguages(input1)
+	actual2 := TopLanguages(input2)
+
+	if !reflect.DeepEqual(actual1, expected1) {
+		t.Errorf("for input-1, expected %v, get %v", expected1, actual1)
+	}
+
+	if !reflect.DeepEqual(actual2, expected2) {
+		t.Errorf("for input-2, expected %v, get %v", expected2, actual2)
 	}
 }
