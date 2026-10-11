@@ -1,8 +1,15 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
 version: 2
 
+project_name: jalebi
+
 builds:
-  - main: ./cmd/jalebi
+  - id: jalebi
+    main: ./cmd/jalebi
     binary: jalebi
+
+    env:
+      - CGO_ENABLED=0
 
     ldflags:
       - -s -w
@@ -16,3 +23,65 @@ builds:
     goarch:
       - amd64
       - arm64
+
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: default
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - "^build:"
+      - "^Merge"
+  groups:
+    - title: "Features"
+      regexp: "^.*?(feat)(\\(.*\\))?!?:.+$"
+      order: 0
+
+    - title: "Bug Fixes"
+      regexp: "^.*?(fix)(\\(.*\\))?!?:.+$"
+      order: 1
+
+    - title: "Refactoring"
+      regexp: "^.*?(refactor)(\\(.*\\))?!?:.+$"
+      order: 2
+
+    - title: "Other Changes"
+      order: 999
+
+release:
+  github:
+    owner: bhardwaj-shubham
+    name: jalebi
+  draft: false
+  prerelease: auto
+  name_template: "Release v{{ .Version }}"
+  header: |
+    ## What's Changed in v{{ .Version }}
+
+  footer: |
+    ---
+    ### Installation & Verification
+
+    Download the archive for your operating system and architecture.
+
+    Verify checksums with `sha256sum --check checksums.txt` on Linux
+    or macOS. On Windows, use `Get-FileHash` in PowerShell to verify
+    SHA-256 hashes against `checksums.txt`.
