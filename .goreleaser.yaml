@@ -85,3 +85,14 @@ release:
     Verify checksums with `sha256sum --check checksums.txt` on Linux
     or macOS. On Windows, use `Get-FileHash` in PowerShell to verify
     SHA-256 hashes against `checksums.txt`.
+
+homebrew_casks:
+  - name: jalebi
+    repository:
+      owner: bhardwaj-shubham
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+
+    directory: Casks
+    homepage: https://github.com/bhardwaj-shubham/jalebi
+    description: "A CLI for analyzing codebases locally."
