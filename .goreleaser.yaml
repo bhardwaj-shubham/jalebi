@@ -96,3 +96,34 @@ homebrew_casks:
     directory: Casks
     homepage: https://github.com/bhardwaj-shubham/jalebi
     description: "A CLI for analyzing codebases locally."
+
+winget:
+  - name: jalebi
+    package_name: Jalebi
+    package_identifier: ItsB.Jalebi
+    publisher: ItsB
+    publisher_url: https://github.com/bhardwaj-shubham
+    publisher_support_url: https://github.com/bhardwaj-shubham/jalebi/issues
+    license: MIT
+    license_url: https://github.com/bhardwaj-shubham/jalebi/blob/main/LICENSE
+    homepage: https://github.com/bhardwaj-shubham/jalebi
+    short_description: "A CLI for analyzing codebases locally."
+    description: "Analyze codebases locally by inspecting files, languages, and code tags."
+    tags:
+      - cli
+      - developer-tools
+      - golang
+    skip_upload: auto
+    repository:
+      owner: bhardwaj-shubham
+      name: winget-pkgs
+      token: "{{ .Env.WINGET_GITHUB_TOKEN }}"
+      branch: "jalebi-{{ .Version }}"
+      pull_request:
+        enabled: true
+        draft: false
+        token: "{{ .Env.WINGET_GITHUB_TOKEN }}"
+        base:
+          owner: microsoft
+          name: winget-pkgs
+          branch: master
