@@ -98,6 +98,16 @@ func Analyze(
 	matcher IgnoreMatcher,
 	analysisType AnalysisType,
 ) (AnalysisResult, error) {
+	return AnalyzeWithLimit(ctx, root, matcher, analysisType, 0)
+}
+
+func AnalyzeWithLimit(
+	ctx context.Context,
+	root string,
+	matcher IgnoreMatcher,
+	analysisType AnalysisType,
+	limit int,
+) (AnalysisResult, error) {
 	projectInfo := ProjectInfo{}
 	filesCountByLanguage := make(FilesCountByLanguage)
 
@@ -107,6 +117,8 @@ func Analyze(
 	runFiles := analysisType == TypeAll || analysisType == TypeFiles
 	runLanguages := analysisType == TypeAll || analysisType == TypeLanguages
 	runTags := analysisType == TypeAll || analysisType == TypeTags
+
+	tagComplete := false
 
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -172,8 +184,13 @@ func Analyze(
 		}
 
 		// Tag analysis.
-		if runTags {
-			scanResult, err := findTagsInFile(
+		if runTags && !tagComplete {
+			remaining := 0
+			if limit > 0 {
+				remaining = limit - len(searchedTags)
+			}
+
+			scanResult, err := findTagsInFileWithLimit(
 				ctx,
 				path,
 				d,
@@ -181,6 +198,7 @@ func Analyze(
 				kwBytes,
 				allowedExtensions,
 				allowedFilenames,
+				remaining,
 			)
 			if err != nil {
 				return err
@@ -188,6 +206,14 @@ func Analyze(
 
 			searchedTags = append(searchedTags, scanResult.Tags...)
 			skippedLines = append(skippedLines, scanResult.SkippedLines...)
+
+			if limit > 0 && len(searchedTags) >= limit {
+				tagComplete = true
+
+				if analysisType == TypeTags {
+					return fs.SkipAll
+				}
+			}
 		}
 
 		return nil

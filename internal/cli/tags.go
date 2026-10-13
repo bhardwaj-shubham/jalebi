@@ -42,7 +42,28 @@ func findTagsInFile(
 	allowedExtensions map[string]struct{},
 	allowedFilenames map[string]struct{},
 ) (TagScanResult, error) {
+	return findTagsInFileWithLimit(
+		ctx,
+		path,
+		d,
+		keywords,
+		kwBytes,
+		allowedExtensions,
+		allowedFilenames,
+		0,
+	)
+}
 
+func findTagsInFileWithLimit(
+	ctx context.Context,
+	path string,
+	d fs.DirEntry,
+	keywords []string,
+	kwBytes [][]byte,
+	allowedExtensions map[string]struct{},
+	allowedFilenames map[string]struct{},
+	limit int,
+) (TagScanResult, error) {
 	filename := strings.ToLower(d.Name())
 
 	for _, suffix := range skippedFilenameSuffixes {
@@ -141,6 +162,13 @@ func findTagsInFile(
 						tag:     kw,
 						context: contextStr,
 					})
+
+					if limit > 0 && len(searchedTags) >= limit {
+						return TagScanResult{
+							Tags:         searchedTags,
+							SkippedLines: skippedLines,
+						}, nil
+					}
 				}
 
 				currIdx = absoluteIdx + len(kwb)

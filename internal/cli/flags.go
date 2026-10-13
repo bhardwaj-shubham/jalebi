@@ -51,6 +51,7 @@ type Config struct {
 	ShowVersion bool
 	Type        AnalysisType
 	IgnoreList  IgnoreList
+	Limit       int
 }
 
 func ParseFlags(args []string, errorWriter io.Writer) (*Config, error) {
@@ -65,6 +66,8 @@ func ParseFlags(args []string, errorWriter io.Writer) (*Config, error) {
 	fs.Var(&cfg.Type, "type", "Jalebi analysis type (files, languages, tags)")
 	fs.Var(&cfg.IgnoreList, "ignore", "Files or Projects to ignore, separated by '|'")
 
+	fs.IntVar(&cfg.Limit, "limit", 0, "Maximum number of tag occurrences to scan (0 = unlimited)")
+
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			cfg.ShowHelp = true
@@ -74,11 +77,15 @@ func ParseFlags(args []string, errorWriter io.Writer) (*Config, error) {
 		return nil, err
 	}
 
-	positional := fs.Args()
+	if cfg.Limit < 0 {
+		return nil, errors.New("limit cannot be negative")
+	}
 
 	if cfg.ShowVersion {
 		return cfg, nil
 	}
+
+	positional := fs.Args()
 
 	if len(positional) == 0 {
 		return nil, errors.New("no project directory provided")

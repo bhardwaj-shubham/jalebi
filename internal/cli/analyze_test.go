@@ -339,3 +339,78 @@ func TestAnalyze_Cancellation(t *testing.T) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 }
+
+func TestAnalyzeWithLimit_Unlimited(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	content := "// TODO: first\n// FIXME: second\n// NOTE: third\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := AnalyzeWithLimit(ctx, tmpDir, NewIgnoreMatcher(nil), TypeTags, 0)
+	if err != nil {
+		t.Fatalf("AnalyzeWithLimit returned error: %v", err)
+	}
+
+	if got, want := len(result.Tags), 3; got != want {
+		t.Fatalf("got %d tags, want %d", got, want)
+	}
+}
+
+func TestAnalyzeWithLimit_TypeTags(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	content := "// TODO: first\n// FIXME: second\n// NOTE: third\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := AnalyzeWithLimit(ctx, tmpDir, NewIgnoreMatcher(nil), TypeTags, 2)
+	if err != nil {
+		t.Fatalf("AnalyzeWithLimit returned error: %v", err)
+	}
+
+	if got, want := len(result.Tags), 2; got != want {
+		t.Fatalf("got %d tags, want %d", got, want)
+	}
+
+	if result.Tags[0].tag != "TODO" || result.Tags[1].tag != "FIXME" {
+		t.Fatalf("unexpected tags: got %q and %q", result.Tags[0].tag, result.Tags[1].tag)
+	}
+}
+
+func TestAnalyzeWithLimit_TypeAllPreservesProjectInfo(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	files := map[string]string{
+		"main.go": "// TODO: first\n// FIXME: second\n",
+		"app.js":  "// NOTE: third\n",
+	}
+
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(tmpDir, name), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	result, err := AnalyzeWithLimit(ctx, tmpDir, NewIgnoreMatcher(nil), TypeAll, 1)
+	if err != nil {
+		t.Fatalf("AnalyzeWithLimit returned error: %v", err)
+	}
+
+	if got, want := len(result.Tags), 1; got != want {
+		t.Fatalf("got %d tags, want %d", got, want)
+	}
+
+	if got, want := result.ProjectInfo.Files, 2; got != want {
+		t.Errorf("got %d files, want %d", got, want)
+	}
+
+	if len(result.Languages) == 0 {
+		t.Error("expected language statistics to be populated")
+	}
+}
