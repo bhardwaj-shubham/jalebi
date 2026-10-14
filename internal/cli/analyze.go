@@ -108,6 +108,17 @@ func AnalyzeWithLimit(
 	analysisType AnalysisType,
 	limit int,
 ) (AnalysisResult, error) {
+	return AnalyzeWithFilter(ctx, root, matcher, analysisType, limit, nil)
+}
+
+func AnalyzeWithFilter(
+	ctx context.Context,
+	root string,
+	matcher IgnoreMatcher,
+	analysisType AnalysisType,
+	limit int,
+	tags []string,
+) (AnalysisResult, error) {
 	projectInfo := ProjectInfo{}
 	filesCountByLanguage := make(FilesCountByLanguage)
 
@@ -117,6 +128,18 @@ func AnalyzeWithLimit(
 	runFiles := analysisType == TypeAll || analysisType == TypeFiles
 	runLanguages := analysisType == TypeAll || analysisType == TypeLanguages
 	runTags := analysisType == TypeAll || analysisType == TypeTags
+
+	selectedKeywords := keywords
+	selectedKeywordBytes := kwBytes
+
+	if len(tags) > 0 {
+		selectedKeywords = tags
+		selectedKeywordBytes = make([][]byte, len(selectedKeywords))
+
+		for i, keyword := range selectedKeywords {
+			selectedKeywordBytes[i] = []byte(keyword)
+		}
+	}
 
 	tagComplete := false
 
@@ -194,8 +217,8 @@ func AnalyzeWithLimit(
 				ctx,
 				path,
 				d,
-				keywords,
-				kwBytes,
+				selectedKeywords,
+				selectedKeywordBytes,
 				allowedExtensions,
 				allowedFilenames,
 				remaining,

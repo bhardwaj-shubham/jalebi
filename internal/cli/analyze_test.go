@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -412,5 +413,204 @@ func TestAnalyzeWithLimit_TypeAllPreservesProjectInfo(t *testing.T) {
 
 	if len(result.Languages) == 0 {
 		t.Error("expected language statistics to be populated")
+	}
+}
+
+func TestAnalyzeWithFilter_SingleTag(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	content := "// TODO: first\n// FIXME: second\n// BUG: third\n// NOTE: fourth\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := AnalyzeWithFilter(
+		ctx, tmpDir, NewIgnoreMatcher(nil), TypeTags, 0, []string{"TODO"},
+	)
+	if err != nil {
+		t.Fatalf("AnalyzeWithFilter returned error: %v", err)
+	}
+
+	if got, want := len(result.Tags), 1; got != want {
+		t.Fatalf("got %d tags, want %d", got, want)
+	}
+
+	if got, want := result.Tags[0].tag, "TODO"; got != want {
+		t.Errorf("got tag %q, want %q", got, want)
+	}
+}
+
+func TestAnalyzeWithFilter_MultipleTags(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	content := "// TODO: first\n// FIXME: second\n// BUG: third\n// NOTE: fourth\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := AnalyzeWithFilter(
+		ctx, tmpDir, NewIgnoreMatcher(nil), TypeTags, 0, []string{"TODO", "BUG"},
+	)
+	if err != nil {
+		t.Fatalf("AnalyzeWithFilter returned error: %v", err)
+	}
+
+	if got, want := len(result.Tags), 2; got != want {
+		t.Fatalf("got %d tags, want %d", got, want)
+	}
+
+	found := make(map[string]int)
+	for _, tag := range result.Tags {
+		found[tag.tag]++
+	}
+
+	for _, tag := range []string{"TODO", "BUG"} {
+		if found[tag] != 1 {
+			t.Errorf("tag %q occurred %d times, want 1", tag, found[tag])
+		}
+	}
+
+	for _, tag := range []string{"FIXME", "NOTE"} {
+		if found[tag] != 0 {
+			t.Errorf("unexpected tag %q in filtered results", tag)
+		}
+	}
+}
+
+func TestAnalyzeWithFilter_NilAndEmptyDefaultToAllTags(t *testing.T) {
+	for _, tags := range [][]string{nil, {}} {
+		t.Run(fmt.Sprintf("tags=%v", tags), func(t *testing.T) {
+			ctx := context.Background()
+			tmpDir := t.TempDir()
+
+			content := "// TODO: first\n// FIXME: second\n// BUG: third\n// HACK: fourth\n// REFACTOR: fifth\n// NOTE: sixth\n"
+			if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte(content), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			result, err := AnalyzeWithFilter(
+				ctx, tmpDir, NewIgnoreMatcher(nil), TypeTags, 0, tags,
+			)
+			if err != nil {
+				t.Fatalf("AnalyzeWithFilter returned error: %v", err)
+			}
+
+			if got, want := len(result.Tags), 6; got != want {
+				t.Fatalf("got %d tags, want %d", got, want)
+			}
+		})
+	}
+}
+
+func TestAnalyzeWithFilter_FilterBeforeLimit(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	content := "// FIXME: first\n// TODO: first\n// BUG: third\n// TODO: second\n// TODO: third\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := AnalyzeWithFilter(
+		ctx, tmpDir, NewIgnoreMatcher(nil), TypeTags, 2, []string{"TODO"},
+	)
+	if err != nil {
+		t.Fatalf("AnalyzeWithFilter returned error: %v", err)
+	}
+
+	if got, want := len(result.Tags), 2; got != want {
+		t.Fatalf("got %d tags, want %d", got, want)
+	}
+
+	for _, tag := range result.Tags {
+		if tag.tag != "TODO" {
+			t.Errorf("got tag %q, want only TODO", tag.tag)
+		}
+	}
+}
+
+func TestAnalyzeWithFilter_TypeAllPreservesProjectInfo(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	files := map[string]string{
+		"main.go":   "// TODO: first\n// FIXME: second\n",
+		"app.js":    "// BUG: third\n// TODO: fourth\n",
+		"readme.md": "# Project\n",
+	}
+
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(tmpDir, name), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	result, err := AnalyzeWithFilter(
+		ctx, tmpDir, NewIgnoreMatcher(nil), TypeAll, 1, []string{"TODO"},
+	)
+	if err != nil {
+		t.Fatalf("AnalyzeWithFilter returned error: %v", err)
+	}
+
+	if got, want := len(result.Tags), 1; got != want {
+		t.Fatalf("got %d tags, want %d", got, want)
+	}
+
+	if result.Tags[0].tag != "TODO" {
+		t.Errorf("got tag %q, want TODO", result.Tags[0].tag)
+	}
+
+	if got, want := result.ProjectInfo.Files, 3; got != want {
+		t.Errorf("got %d files, want %d", got, want)
+	}
+
+	if result.Languages["Go"] != 1 {
+		t.Errorf("Go files = %d, want 1", result.Languages["Go"])
+	}
+	if result.Languages["JavaScript"] != 1 {
+		t.Errorf("JavaScript files = %d, want 1", result.Languages["JavaScript"])
+	}
+	if result.Languages["Markdown"] != 1 {
+		t.Errorf("Markdown files = %d, want 1", result.Languages["Markdown"])
+	}
+}
+
+func TestAnalyzeWithFilter_Deduplication(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	content := "// TODO: first\n// BUG: second\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// TagList.Set is responsible for deduplication
+	var tags TagList
+	if err := tags.Set("TODO|TODO|BUG"); err != nil {
+		t.Fatalf("TagList.Set returned error: %v", err)
+	}
+
+	result, err := AnalyzeWithFilter(
+		ctx, tmpDir, NewIgnoreMatcher(nil), TypeTags, 0, tags,
+	)
+	if err != nil {
+		t.Fatalf("AnalyzeWithFilter returned error: %v", err)
+	}
+
+	if got, want := len(result.Tags), 2; got != want {
+		t.Fatalf("got %d tags, want %d: %#v", got, want, result.Tags)
+	}
+
+	found := make(map[string]int)
+	for _, tag := range result.Tags {
+		found[tag.tag]++
+	}
+
+	for _, tag := range []string{"TODO", "BUG"} {
+		if found[tag] != 1 {
+			t.Errorf("tag %q occurred %d times, want 1", tag, found[tag])
+		}
 	}
 }

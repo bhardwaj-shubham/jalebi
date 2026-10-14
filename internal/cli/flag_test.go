@@ -86,3 +86,70 @@ func TestParseFlags(t *testing.T) {
 		})
 	}
 }
+
+func TestParseFlagsTagFilter(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "single tag",
+			args: []string{"--tag", "TODO", "."},
+			want: "TODO",
+		},
+		{
+			name: "multiple tags",
+			args: []string{"--tag", "TODO|FIXME|BUG", "."},
+			want: "TODO|FIXME|BUG",
+		},
+		{
+			name: "case insensitive with whitespace",
+			args: []string{"--tag", " todo |fixme ", "."},
+			want: "TODO|FIXME",
+		},
+		{
+			name: "duplicate tags are deduplicated",
+			args: []string{"--tag", "TODO|BUG|TODO|BUG", "."},
+			want: "TODO|BUG",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := ParseFlags(tt.args, io.Discard)
+			if err != nil {
+				t.Fatalf("ParseFlags() error = %v", err)
+			}
+
+			if got := cfg.Tags.String(); got != tt.want {
+				t.Errorf("Tags = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseFlagsInvalidTagFilter(t *testing.T) {
+	tests := []struct {
+		name string
+		tag  string
+	}{
+		{name: "unknown tag", tag: "UNKNOWN"},
+		{name: "empty tag", tag: ""},
+		{name: "empty entry", tag: "TODO||BUG"},
+		{name: "trailing separator", tag: "TODO|"},
+		{name: "leading separator", tag: "|TODO"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseFlags(
+				[]string{"--tag", tt.tag, "."},
+				io.Discard,
+			)
+			if err == nil {
+				t.Fatal("ParseFlags() expected an error for invalid tag filter")
+			}
+		})
+	}
+}

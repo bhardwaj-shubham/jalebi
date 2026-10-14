@@ -45,6 +45,47 @@ func (i *IgnoreList) Set(value string) error {
 	return nil
 }
 
+type TagList []string
+
+func (t *TagList) String() string {
+	return strings.Join(*t, "|")
+}
+
+func (t *TagList) Set(value string) error {
+	parts := strings.Split(value, "|")
+	parsed := make([]string, 0, len(parts))
+
+	validTags := make(map[string]struct{}, len(keywords))
+	seen := make(map[string]struct{}, len(parts))
+
+	for _, tag := range keywords {
+		validTags[tag] = struct{}{}
+	}
+
+	for _, part := range parts {
+		tag := strings.ToUpper(strings.TrimSpace(part))
+		if tag == "" {
+			return errors.New("tag list cannot contain empty tags")
+		}
+
+		if _, ok := validTags[tag]; !ok {
+			return errors.New(
+				"invalid tag: must be one of TODO, FIXME, BUG, HACK, REFACTOR, or NOTE",
+			)
+		}
+
+		if _, exists := seen[tag]; exists {
+			continue
+		}
+
+		seen[tag] = struct{}{}
+		parsed = append(parsed, tag)
+	}
+
+	*t = parsed
+	return nil
+}
+
 type Config struct {
 	Path        string
 	ShowHelp    bool
@@ -52,6 +93,7 @@ type Config struct {
 	Type        AnalysisType
 	IgnoreList  IgnoreList
 	Limit       int
+	Tags        TagList
 }
 
 func ParseFlags(args []string, errorWriter io.Writer) (*Config, error) {
@@ -65,6 +107,7 @@ func ParseFlags(args []string, errorWriter io.Writer) (*Config, error) {
 
 	fs.Var(&cfg.Type, "type", "Jalebi analysis type (files, languages, tags)")
 	fs.Var(&cfg.IgnoreList, "ignore", "Files or Projects to ignore, separated by '|'")
+	fs.Var(&cfg.Tags, "tag", "Tags to scan, separated by '|' (TODO, FIXME, BUG, HACK, REFACTOR, NOTE)")
 
 	fs.IntVar(&cfg.Limit, "limit", 0, "Maximum number of tag occurrences to scan (0 = unlimited)")
 
