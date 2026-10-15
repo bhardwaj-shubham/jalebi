@@ -153,3 +153,51 @@ func TestParseFlagsInvalidTagFilter(t *testing.T) {
 		})
 	}
 }
+
+func TestParseFlagsLanguageFilter(t *testing.T) {
+	tests := []struct {
+		name string
+		lang string
+		want string
+	}{
+		{name: "single language", lang: "go", want: "Go"},
+		{name: "multiple languages", lang: "go|python", want: "Go|Python"},
+		{name: "case insensitive with whitespace", lang: "go |PYTHON", want: "Go|Python"},
+		{name: "duplicates are deduplicated", lang: "go|python|go", want: "Go|Python"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := ParseFlags([]string{"--lang", tt.lang, "."}, io.Discard)
+			if err != nil {
+				t.Fatalf("ParseFlags() error = %v", err)
+			}
+
+			if got := cfg.Languages.String(); got != tt.want {
+				t.Errorf("Languages = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseFlagsInvalidLanguageFilter(t *testing.T) {
+	tests := []struct {
+		name string
+		lang string
+	}{
+		{name: "unknown language", lang: "rust"},
+		{name: "empty language", lang: ""},
+		{name: "empty entry", lang: "go||python"},
+		{name: "trailing seperator", lang: "go|"},
+		{name: "leading seperator", lang: "|go"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseFlags([]string{"--lang", tt.lang, "."}, io.Discard)
+			if err == nil {
+				t.Fatal("ParseFlags() expected an error for invalid language filter")
+			}
+		})
+	}
+}

@@ -614,3 +614,119 @@ func TestAnalyzeWithFilter_Deduplication(t *testing.T) {
 		}
 	}
 }
+
+func TestAnalyzeWithFilters_LanguageFilter(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	files := map[string]string{
+		"main.go":   "// TODO: Go task\n// FIXME: Go issue\n",
+		"app.py":    "# TODO: Python task\n",
+		"app.js":    "// BUG: JavaScript issue\n",
+		"readme.md": "<!-- TODO: Markdown task -->\n",
+	}
+
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(tmpDir, name), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	result, err := AnalyzeWithFilters(
+		ctx, tmpDir, NewIgnoreMatcher(nil), TypeAll, 0, nil, []string{"Go"},
+	)
+	if err != nil {
+		t.Fatalf("AnalyzeWithFilters returned error: %v", err)
+	}
+
+	if got, want := len(result.Tags), 2; got != want {
+		t.Fatalf("got %d tags, want %d", got, want)
+	}
+
+	for _, tag := range result.Tags {
+		if filepath.Base(tag.path) != "main.go" {
+			t.Errorf("unexpected tag from %q", tag.path)
+		}
+	}
+
+	if got, want := result.ProjectInfo.Files, 4; got != want {
+		t.Errorf("file count = %d, want %d", got, want)
+	}
+
+	if result.Languages["Go"] != 1 ||
+		result.Languages["Python"] != 1 ||
+		result.Languages["JavaScript"] != 1 ||
+		result.Languages["Markdown"] != 1 {
+		t.Errorf("language statistics changed unexpectedly: %#v", result.Languages)
+	}
+}
+
+func TestAnalyzeWithFilters_TagAndLanguageFilters(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	files := map[string]string{
+		"main.go": "// TODO: Go task\n// FIXME: Go issue\n",
+		"app.py":  "# TODO: Python task\n",
+		"app.js":  "// TODO: JavaScript task\n",
+	}
+
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(tmpDir, name), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	result, err := AnalyzeWithFilters(
+		ctx, tmpDir, NewIgnoreMatcher(nil), TypeTags, 0,
+		[]string{"TODO"}, []string{"Go", "Python"},
+	)
+	if err != nil {
+		t.Fatalf("AnalyzeWithFilters returned error: %v", err)
+	}
+
+	if got, want := len(result.Tags), 2; got != want {
+		t.Fatalf("got %d tags, want %d", got, want)
+	}
+
+	for _, tag := range result.Tags {
+		if tag.tag != "TODO" {
+			t.Errorf("got tag %q, want TODO", tag.tag)
+		}
+		if filepath.Base(tag.path) == "app.js" {
+			t.Errorf("JavaScript tag should have been excluded")
+		}
+	}
+}
+
+func TestAnalyzeWithFilters_LimitAppliesAfterFilters(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	files := map[string]string{
+		"main.go": "// FIXME: Go issue\n// TODO: Go task 1\n// TODO: Go task 2\n",
+		"app.py":  "# TODO: Python task\n",
+	}
+
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(tmpDir, name), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	result, err := AnalyzeWithFilters(
+		ctx, tmpDir, NewIgnoreMatcher(nil), TypeTags, 1,
+		[]string{"TODO"}, []string{"Go"},
+	)
+	if err != nil {
+		t.Fatalf("AnalyzeWithFilters returned error: %v", err)
+	}
+
+	if got, want := len(result.Tags), 1; got != want {
+		t.Fatalf("got %d tags, want %d", got, want)
+	}
+
+	if result.Tags[0].tag != "TODO" {
+		t.Errorf("got tag %q, want TODO", result.Tags[0].tag)
+	}
+}

@@ -119,6 +119,20 @@ func AnalyzeWithFilter(
 	limit int,
 	tags []string,
 ) (AnalysisResult, error) {
+	return AnalyzeWithFilters(
+		ctx, root, matcher, analysisType, limit, tags, nil,
+	)
+}
+
+func AnalyzeWithFilters(
+	ctx context.Context,
+	root string,
+	matcher IgnoreMatcher,
+	analysisType AnalysisType,
+	limit int,
+	tags []string,
+	languages []string,
+) (AnalysisResult, error) {
 	projectInfo := ProjectInfo{}
 	filesCountByLanguage := make(FilesCountByLanguage)
 
@@ -139,6 +153,11 @@ func AnalyzeWithFilter(
 		for i, keyword := range selectedKeywords {
 			selectedKeywordBytes[i] = []byte(keyword)
 		}
+	}
+
+	selectedLanguages := make(map[string]struct{}, len(languages))
+	for _, language := range languages {
+		selectedLanguages[strings.ToLower(language)] = struct{}{}
 	}
 
 	tagComplete := false
@@ -189,15 +208,7 @@ func AnalyzeWithFilter(
 
 		// Language analysis.
 		if runLanguages {
-			ext := filepath.Ext(path)
-
-			if ext == "" {
-				ext = "[no_extension]"
-			} else {
-				ext = strings.ToLower(ext[1:])
-			}
-
-			language := extToLanguage[ext]
+			language := languageForPath(path)
 
 			if language == "" {
 				filesCountByLanguage["Others"]++
@@ -208,6 +219,13 @@ func AnalyzeWithFilter(
 
 		// Tag analysis.
 		if runTags && !tagComplete {
+			if len(selectedLanguages) > 0 {
+				language := languageForPath(path)
+				if _, ok := selectedLanguages[strings.ToLower(language)]; !ok {
+					return nil
+				}
+			}
+
 			remaining := 0
 			if limit > 0 {
 				remaining = limit - len(searchedTags)
@@ -252,4 +270,16 @@ func AnalyzeWithFilter(
 		Tags:         searchedTags,
 		SkippedLines: skippedLines,
 	}, nil
+}
+
+func languageForPath(path string) string {
+	ext := filepath.Ext(path)
+
+	if ext == "" {
+		ext = "[no_extension]"
+	} else {
+		ext = strings.ToLower(ext[1:])
+	}
+
+	return extToLanguage[ext]
 }

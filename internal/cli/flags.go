@@ -86,6 +86,52 @@ func (t *TagList) Set(value string) error {
 	return nil
 }
 
+type LanguageList []string
+
+func (l *LanguageList) String() string {
+	return strings.Join(*l, "|")
+}
+
+func (l *LanguageList) Set(value string) error {
+	parts := strings.Split(value, "|")
+	parsed := make([]string, 0, len(parts))
+
+	validLanguages := make(map[string]string, len(extToLanguage))
+	seen := make(map[string]struct{}, len(parts))
+
+	for _, language := range extToLanguage {
+		if language == "" || language == "NO_EXT" {
+			continue
+		}
+		validLanguages[strings.ToLower(language)] = language
+	}
+
+	for _, part := range parts {
+		name := strings.ToLower(strings.TrimSpace(part))
+		if name == "" {
+			return errors.New("language list cannot contain empty languages")
+		}
+
+		language, ok := validLanguages[name]
+		if !ok {
+			return errors.New(
+				"invalid language: must be one of Go, Python, TypeScript, JavaScript, or Markdown",
+			)
+		}
+
+		key := strings.ToLower(language)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+
+		seen[key] = struct{}{}
+		parsed = append(parsed, language)
+	}
+
+	*l = parsed
+	return nil
+}
+
 type Config struct {
 	Path        string
 	ShowHelp    bool
@@ -94,6 +140,7 @@ type Config struct {
 	IgnoreList  IgnoreList
 	Limit       int
 	Tags        TagList
+	Languages   LanguageList
 }
 
 func ParseFlags(args []string, errorWriter io.Writer) (*Config, error) {
@@ -108,6 +155,7 @@ func ParseFlags(args []string, errorWriter io.Writer) (*Config, error) {
 	fs.Var(&cfg.Type, "type", "Jalebi analysis type (files, languages, tags)")
 	fs.Var(&cfg.IgnoreList, "ignore", "Files or Projects to ignore, separated by '|'")
 	fs.Var(&cfg.Tags, "tag", "Tags to scan, separated by '|' (TODO, FIXME, BUG, HACK, REFACTOR, NOTE)")
+	fs.Var(&cfg.Languages, "lang", "Languages to scan for tags, separated by '|' (go, python, typescript, javascript, markdown")
 
 	fs.IntVar(&cfg.Limit, "limit", 0, "Maximum number of tag occurrences to scan (0 = unlimited)")
 

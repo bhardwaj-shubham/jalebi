@@ -37,7 +37,7 @@ func CmdArgs(ctx context.Context, args []string) error {
 	matcher := NewIgnoreMatcher(cfg.IgnoreList)
 	writer := os.Stdout
 
-	result, err := AnalyzeWithFilter(ctx, cfg.Path, matcher, cfg.Type, cfg.Limit, cfg.Tags)
+	result, err := AnalyzeWithFilters(ctx, cfg.Path, matcher, cfg.Type, cfg.Limit, cfg.Tags, cfg.Languages)
 	if err != nil {
 		return err
 	}
