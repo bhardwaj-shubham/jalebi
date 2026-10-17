@@ -20,6 +20,9 @@ The project is also a way to explore software and systems concepts incrementally
 * Shows the file, line, column, tag, and surrounding line for each detected note.
 * Supports selecting the analysis type with `--type`.
 * Supports ignoring files or directories with `--ignore`.
+* Supports limiting tag occurrences with `--limit` (`0` means unlimited).
+* Supports filtering developer-note markers with `--tag`.
+* Supports filtering tag scans by language with `--lang`.
 * Supports `--help` / `-h` and `--version` / `-v`.
 * Supports graceful cancellation while scanning.
 
@@ -31,6 +34,7 @@ jalebi /path/to/project
 ```
 
 Run only a specific analysis:
+
 ```bash
 jalebi --type files /path/to/project
 jalebi --type languages /path/to/project
@@ -39,9 +43,39 @@ jalebi --type tags /path/to/project
 The default analysis type is `all`, which runs all three analyses.
 
 Ignore files or directories by name:
+
 ```bash
 jalebi --ignore 'prisma|generated|dist' /path/to/project
 ```
+
+Filter tags by type:
+
+```bash
+jalebi --type tags --tag 'TODO|FIXME' /path/to/project
+```
+
+Filter tag scanning by language:
+
+```bash
+jalebi --type tags --lang 'go|python' /path/to/project
+```
+
+Limit the number of matching tag occurrences:
+
+```bash
+jalebi --type tags --tag TODO --limit 10 /path/to/project
+```
+
+Combine filters:
+
+```bash
+jalebi --type tags --tag 'TODO|FIXME' --lang 'go|typescript' --limit 20 /path/to/project
+```
+
+The `--tag` and `--lang` options accept pipe-separated values. Values are case-insensitive, duplicate selections are ignored, and unsupported values are rejected. The `--limit` option defaults to `0`, meaning unlimited.
+
+Language filtering applies only to tag scanning. With the default `all` analysis, file and language statistics remain complete even when a tag limit is reached.
+
 Multiple ignore patterns can be provided as a single string separated by `|` (pipe) characters.
 
 ## Installation

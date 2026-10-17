@@ -155,7 +155,7 @@ func ParseFlags(args []string, errorWriter io.Writer) (*Config, error) {
 	fs.Var(&cfg.Type, "type", "Jalebi analysis type (files, languages, tags)")
 	fs.Var(&cfg.IgnoreList, "ignore", "Files or Projects to ignore, separated by '|'")
 	fs.Var(&cfg.Tags, "tag", "Tags to scan, separated by '|' (TODO, FIXME, BUG, HACK, REFACTOR, NOTE)")
-	fs.Var(&cfg.Languages, "lang", "Languages to scan for tags, separated by '|' (go, python, typescript, javascript, markdown")
+	fs.Var(&cfg.Languages, "lang", "Languages to scan for tags, separated by '|' (go, python, typescript, javascript, markdown)")
 
 	fs.IntVar(&cfg.Limit, "limit", 0, "Maximum number of tag occurrences to scan (0 = unlimited)")
 
