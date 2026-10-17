@@ -13,6 +13,8 @@ on:
     paths-ignore:
       - "**/*.md"
 
+  workflow_dispatch:
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -32,3 +34,16 @@ jobs:
 
       - name: Build
         run: go build ./cmd/jalebi
+
+  homebrew-smoke-test:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-latest
+
+    steps:
+      - name: Install Jalebi from Homebrew tap
+        run: brew install --cask bhardwaj-shubham/tap/jalebi
+
+      - name: Verify installation
+        run: |
+          jalebi --version
+          jalebi --help
