@@ -80,15 +80,25 @@ Multiple ignore patterns can be provided as a single string separated by `|` (pi
 
 ## Installation
 
-Download the latest binary from the [GitHub Releases](../../releases) page.
+### Homebrew (macOS)
 
-Jalebi provides release binaries for multiple platforms, including Linux, macOS, and Windows.
+```bash
+brew install --cask bhardwaj-shubham/tap/jalebi
+```
 
-After downloading, make the binary executable and move it to a directory in your `PATH` and run:
+### Download a binary
+
+Download the latest release for your platform from the [GitHub Releases](../../releases) page.
+
+Jalebi provides prebuilt release binaries for Linux, macOS, and Windows.
+
+On Linux and macOS, make the binary executable and move it to a directory in your `PATH`. Then run:
 
 ```bash
 jalebi /path/to/project
 ```
+
+On Windows, run `jalebi.exe` from your terminal or add its directory to `PATH` to invoke it from anywhere.
 
 ## Build locally
 
