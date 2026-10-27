@@ -25,6 +25,7 @@ The project is also a way to explore software and systems concepts incrementally
 * Supports filtering tag scans by language with `--lang`.
 * Supports `--help` / `-h` and `--version` / `-v`.
 * Supports graceful cancellation while scanning.
+* Handles oversized lines during tag scanning without aborting the entire analysis.
 
 ## Usage
 Analyze a project with all available features:
@@ -80,6 +81,12 @@ Multiple ignore patterns can be provided as a single string separated by `|` (pi
 
 ## Installation
 
+### Windows package manager
+
+Jalebi's WinGet package submission has passed CI checks and is awaiting maintainer review.
+
+Until the package is approved and published, Windows users can install Jalebi using the prebuilt binary from [GitHub Releases](https://github.com/bhardwaj-shubham/jalebi/releases).
+
 ### Homebrew (macOS)
 
 ```bash
@@ -88,7 +95,7 @@ brew install --cask bhardwaj-shubham/tap/jalebi
 
 ### Download a binary
 
-Download the latest release for your platform from the [GitHub Releases](../../releases) page.
+Download the latest release for your platform from the [GitHub Releases](https://github.com/bhardwaj-shubham/jalebi/releases) page.
 
 Jalebi provides prebuilt release binaries for Linux, macOS, and Windows.
 
@@ -128,12 +135,12 @@ go test ./...
 
 Jalebi is intentionally kept small and incremental. Some of the implementation decisions include:
 
-* **Single project traversal** - the available analyses are performed during a single `filepath.WalkDir` traversal rather than multiple traversals for each analysis type.
-* **Streaming file reads** — use `bufio.Scanner` to process files line by line instead of loading complete files into memory.
+* **Single project traversal** - file statistics, language statistics, and the requested analyses are collected during a single filepath.WalkDir traversal instead of walking the project separately for each analysis.
+* **Streaming file reads** — use `bufio.Reader` to process files line by line instead of loading complete files into memory.
 * **Byte-based marker matching** — use byte searching and explicit word-boundary checks for fixed developer-note markers instead of introducing regular expressions.
 * **Context-based cancellation** — pass `context.Context` through the analysis operations so a scan can stop cooperatively.
 * **Focused file scanning** — only inspect known source/project file types when searching for developer notes rather than attempting to parse every file.
-* **Automated releases** — GitHub Actions and GoReleaser handle reproducible release builds while keeping the release implementation in repository configuration.
+* **Automated releases** — use GitHub Actions and GoReleaser to build and publish release binaries for supported platforms.
 
 ## Issues & contributions
 
